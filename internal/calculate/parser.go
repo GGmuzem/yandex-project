@@ -2,33 +2,23 @@ package calculate
 
 import (
 	"errors"
-	"fmt"
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"strconv"
 )
 
-// CalcError определяет ошибку обработки выражения
-type CalcError struct {
-	Message string
-}
-
-func (e *CalcError) Error() string {
-	return e.Message
-}
-
 // Evaluate принимает строковое выражение и возвращает результат
 func Evaluate(expression string) (string, error) {
 	// Проверяем наличие недопустимых символов
 	if !isValidExpression(expression) {
-		return "", &CalcError{Message: "Invalid expression"}
+		return "", errors.New("invalid expression")
 	}
 
-	// Вычисляем выражение с использованием Go parser
-	fs := token.NewFileSet()
+	// Разбираем выражение с использованием Go parser
 	node, err := parser.ParseExpr(expression)
 	if err != nil {
-		return "", &CalcError{Message: "Expression is not valid"}
+		return "", errors.New("expression is not valid")
 	}
 
 	// Рекурсивное вычисление значения выражения
@@ -40,21 +30,12 @@ func Evaluate(expression string) (string, error) {
 	return strconv.FormatFloat(result, 'f', -1, 64), nil
 }
 
-func isValidExpression(expression string) bool {
-	for _, r := range expression {
-		if !(r >= '0' && r <= '9') && r != '+' && r != '-' && r != '*' && r != '/' && r != ' ' {
-			return false
-		}
-	}
-	return true
-}
-
-func eval(node interface{}) (float64, error) {
-	// Реализация вычисления узла AST-дерева
+// eval рекурсивно вычисляет значение узла AST-дерева
+func eval(node ast.Expr) (float64, error) {
 	switch n := node.(type) {
-	case *parser.BasicLit:
+	case *ast.BasicLit: // Константа (число)
 		return strconv.ParseFloat(n.Value, 64)
-	case *parser.BinaryExpr:
+	case *ast.BinaryExpr: // Бинарное выражение
 		left, err := eval(n.X)
 		if err != nil {
 			return 0, err
@@ -63,19 +44,32 @@ func eval(node interface{}) (float64, error) {
 		if err != nil {
 			return 0, err
 		}
-		switch n.Op.String() {
-		case "+":
+		switch n.Op {
+		case token.ADD:
 			return left + right, nil
-		case "-":
+		case token.SUB:
 			return left - right, nil
-		case "*":
+		case token.MUL:
 			return left * right, nil
-		case "/":
+		case token.QUO:
 			if right == 0 {
 				return 0, errors.New("division by zero")
 			}
 			return left / right, nil
+		default:
+			return 0, errors.New("unsupported operator")
+		}
+	default:
+		return 0, errors.New("unsupported expression")
+	}
+}
+
+// isValidExpression проверяет строку на наличие недопустимых символов
+func isValidExpression(expression string) bool {
+	for _, r := range expression {
+		if !(r >= '0' && r <= '9') && r != '+' && r != '-' && r != '*' && r != '/' && r != ' ' {
+			return false
 		}
 	}
-	return 0, errors.New("invalid expression")
+	return true
 }
