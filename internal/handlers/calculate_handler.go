@@ -1,10 +1,10 @@
 package handlers
 
 import (
-	"calc_service/internal/calculate"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"yandex-project/internal/calculate"
 )
 
 // RequestBody структура для входных данных
