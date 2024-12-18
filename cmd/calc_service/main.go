@@ -4,7 +4,7 @@ import (
 	"log"
 	"net/http"
 
-	"calc_service/internal/handlers"
+	"yandex-project/internal/handlers"
 )
 
 func main() {
