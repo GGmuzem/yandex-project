@@ -31,10 +31,14 @@ func Evaluate(expression string) (string, error) {
 }
 
 // eval рекурсивно вычисляет значение узла AST-дерева
-func eval(node ast.Expr) (float64, error) {
+func eval(node ast.Node) (float64, error) {
 	switch n := node.(type) {
 	case *ast.BasicLit: // Константа (число)
 		return strconv.ParseFloat(n.Value, 64)
+
+	case *ast.ParenExpr: // Обработка выражений в скобках
+		return eval(n.X)
+
 	case *ast.BinaryExpr: // Бинарное выражение
 		left, err := eval(n.X)
 		if err != nil {
@@ -67,7 +71,7 @@ func eval(node ast.Expr) (float64, error) {
 // isValidExpression проверяет строку на наличие недопустимых символов
 func isValidExpression(expression string) bool {
 	for _, r := range expression {
-		if !(r >= '0' && r <= '9') && r != '+' && r != '-' && r != '*' && r != '/' && r != ' ' {
+		if !(r >= '0' && r <= '9') && r != '+' && r != '-' && r != '*' && r != '/' && r != ' ' && r != '(' && r != ')' {
 			return false
 		}
 	}
