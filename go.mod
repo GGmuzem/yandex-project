@@ -1,4 +1,3 @@
-module calc_service
+module yandex-project
 
-go 1.20
-
+go 1.23.4
