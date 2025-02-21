@@ -8,5 +8,6 @@ import (
 func main() {
     log.Println("Agent starting...")
     agent.StartWorker()
+	log.Println("Agent started")
     select {} // Бесконечный цикл
 }

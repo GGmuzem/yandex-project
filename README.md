@@ -11,7 +11,8 @@
 
 2. **Агент** (запуск с 3 горутинами):
     ```bash
-    COMPUTING_POWER=3 go run ./cmd/agent/main.go
+    set COMPUTING_POWER=3 
+    go run ./cmd/agent/main.go
 
 ## Примеры использования
 
