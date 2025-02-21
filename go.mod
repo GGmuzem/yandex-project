@@ -1,3 +1,3 @@
-module yandex-project
+module github.com/GGmuzem/yandex-project
 
-go 1.23.4
+go 1.23.0
