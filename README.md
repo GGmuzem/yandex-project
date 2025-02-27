@@ -31,7 +31,7 @@
    - Поддерживает параллельное выполнение операций
    - Масштабируется через настройку количества воркеров
 
-![Схема работы системы](https://mermaid.ink/img/pako:eNp1kU1vwjAMhv9KlNOQhnTYWHTiY4cfMKnACTiUxm2t5qOKU7GN8d-X0nYCiR0ivXn9xI4dXISSDKTQ7GyFpKrY6sIwJl6VRW20IyacZ0sI5tg7R9jZvD3Jqo1vC22qkiuFhGQ0deLg5FGRgz0GDNpLZxbEeBTewPAPiPSO_kTnb3gEIvPYGa2REO6EVQU5E80-Mc3CJDz-fA4xTFRN_G_Qd_yuxd42bnWjveTmO9Cd0DpndIHUDTLXdIFNpJWXtmsbuSqRx7vD9Tbd8QN4pOtzr6-kp1sH1cDnxiKbRDj2uKsyVjhdYWTDIdL6KPLBKNVujfTDvtMaFGSYKEH4OC_ZW3qnIPtm9CgluG3fNaQQV2Uo7Xu47voDTXiLjA?type=png)
+
 
 ## Требования
 
