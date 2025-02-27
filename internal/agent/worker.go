@@ -37,6 +37,8 @@ func workerLoop(id int) {
 
 	// Интервал между запросами при отсутствии задач
 	retryInterval := 100 * time.Millisecond
+	// Максимальное количество попыток отправки результата
+	maxRetries := 5
 
 	log.Printf("Воркер %d: запущен", id)
 
@@ -95,7 +97,7 @@ func workerLoop(id int) {
 		log.Printf("Воркер %d: выполняется задача #%d (%d мс)...", id, task.ID, task.OperationTime)
 		time.Sleep(time.Duration(task.OperationTime) * time.Millisecond)
 
-		// Отправляем результат обратно оркестратору
+		// Подготавливаем данные результата
 		resultData, err := json.Marshal(models.TaskResult{
 			ID:     task.ID,
 			Result: result,
@@ -108,23 +110,44 @@ func workerLoop(id int) {
 
 		log.Printf("Воркер %d: отправляю результат задачи #%d: %s", id, task.ID, string(resultData))
 
-		resp, err = client.Post("http://localhost:8080/internal/task", "application/json", bytes.NewBuffer(resultData))
-		if err != nil {
-			log.Printf("Воркер %d: ошибка отправки результата: %v", id, err)
-			continue
-		}
+		// Механизм повторных попыток отправки результата
+		retryCount := 0
+		success := false
 
-		respBody, _ := io.ReadAll(resp.Body)
-		log.Printf("Воркер %d: ответ от оркестратора: %s (статус %d)", id, string(respBody), resp.StatusCode)
+		for retryCount < maxRetries && !success {
+			if retryCount > 0 {
+				log.Printf("Воркер %d: повторная попытка #%d отправки результата задачи #%d", id, retryCount, task.ID)
+				time.Sleep(retryInterval * time.Duration(retryCount)) // Увеличиваем интервал с каждой попыткой
+			}
 
-		if resp.StatusCode != http.StatusOK {
-			log.Printf("Воркер %d: оркестратор вернул ошибку при отправке результата: %d", id, resp.StatusCode)
+			// Создаем новый буфер для каждой попытки
+			resp, err = client.Post("http://localhost:8080/internal/task", "application/json", bytes.NewBuffer(resultData))
+
+			if err != nil {
+				log.Printf("Воркер %d: ошибка отправки результата (попытка %d): %v", id, retryCount+1, err)
+				retryCount++
+				continue
+			}
+
+			respBody, _ := io.ReadAll(resp.Body)
+			log.Printf("Воркер %d: ответ от оркестратора (попытка %d): %s (статус %d)",
+				id, retryCount+1, string(respBody), resp.StatusCode)
+
+			if resp.StatusCode == http.StatusOK {
+				success = true
+				log.Printf("Воркер %d: задача #%d успешно завершена, результат: %f", id, task.ID, result)
+			} else {
+				log.Printf("Воркер %d: оркестратор вернул ошибку при отправке результата: %d", id, resp.StatusCode)
+			}
+
 			resp.Body.Close()
-			continue
+			retryCount++
 		}
 
-		resp.Body.Close()
-		log.Printf("Воркер %d: задача #%d выполнена, результат: %f", id, task.ID, result)
+		if !success {
+			log.Printf("Воркер %d: не удалось отправить результат задачи #%d после %d попыток",
+				id, task.ID, maxRetries)
+		}
 	}
 }
 

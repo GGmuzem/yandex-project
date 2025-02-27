@@ -88,39 +88,67 @@ func (tm *TaskManager) AddResult(result models.TaskResult) bool {
 	exprID := tm.TaskToExpr[result.ID]
 	log.Printf("TaskManager.AddResult: Задача #%d принадлежит выражению %s", result.ID, exprID)
 
-	// Удаляем выполненную задачу
-	delete(tm.Tasks, result.ID)
-
-	// Проверяем выражения
-	tm.updateExpressions()
-
 	// Проверяем, есть ли задачи, которые зависят от этого результата
 	resultStr := "result" + strconv.Itoa(result.ID)
+	log.Printf("TaskManager.AddResult: Проверяем зависимые задачи от результата %s", resultStr)
+
+	// Счетчик зависимых задач для логирования
+	dependentTasksCount := 0
+
 	for taskID, taskPtr := range tm.Tasks {
 		// Создаем копию задачи
 		task := *taskPtr
 
 		// Если задача имеет аргумент, который является результатом текущей задачи
 		if task.Arg1 == resultStr || task.Arg2 == resultStr {
+			dependentTasksCount++
+			log.Printf("TaskManager.AddResult: Задача #%d зависит от результата задачи #%d", taskID, result.ID)
+
 			// Заменяем ссылку на результат на фактическое значение
 			if task.Arg1 == resultStr {
+				log.Printf("TaskManager.AddResult: Обновление задачи #%d: arg1 изменен с %s на %f",
+					taskID, task.Arg1, result.Result)
 				task.Arg1 = strconv.FormatFloat(result.Result, 'f', -1, 64)
 			}
 			if task.Arg2 == resultStr {
+				log.Printf("TaskManager.AddResult: Обновление задачи #%d: arg2 изменен с %s на %f",
+					taskID, task.Arg2, result.Result)
 				task.Arg2 = strconv.FormatFloat(result.Result, 'f', -1, 64)
 			}
 
 			// Обновляем задачу
 			*taskPtr = task
+			log.Printf("TaskManager.AddResult: Задача #%d обновлена: %s %s %s",
+				taskID, task.Arg1, task.Operation, task.Arg2)
 
 			// Если теперь задача готова к выполнению, добавляем её в список готовых задач
+			log.Printf("TaskManager.AddResult: Проверка готовности задачи #%d после обновления аргументов", taskID)
 			if isTaskReady(task) {
-				log.Printf("TaskManager.AddResult: Задача #%d теперь готова к выполнению: %s %s %s",
-					taskID, task.Arg1, task.Operation, task.Arg2)
+				log.Printf("TaskManager.AddResult: Задача #%d теперь готова к выполнению", taskID)
 				tm.ReadyTasks = append(tm.ReadyTasks, task)
+				log.Printf("TaskManager.AddResult: Задача #%d добавлена в очередь готовых задач", taskID)
+			} else {
+				log.Printf("TaskManager.AddResult: Задача #%d не готова к выполнению после обновления аргументов", taskID)
 			}
 		}
 	}
+
+	// Удаляем выполненную задачу ПОСЛЕ обработки всех зависимостей
+	delete(tm.Tasks, result.ID)
+
+	// Проверяем выражения
+	tm.updateExpressions()
+
+	log.Printf("TaskManager.AddResult: Найдено %d зависимых задач от результата задачи #%d",
+		dependentTasksCount, result.ID)
+
+	// Дополнительно проверяем количество задач в очереди готовых
+	log.Printf("TaskManager.AddResult: Проверка очереди готовых задач:")
+	for _, task := range tm.ReadyTasks {
+		log.Printf("TaskManager.AddResult: Готовая задача #%d: %s %s %s (выражение %s)",
+			task.ID, task.Arg1, task.Operation, task.Arg2, tm.TaskToExpr[task.ID])
+	}
+	log.Printf("TaskManager.AddResult: Всего в очереди готовых задач: %d", len(tm.ReadyTasks))
 
 	return true
 }
@@ -151,6 +179,7 @@ func (tm *TaskManager) updateExpressions() {
 	log.Println("TaskManager.updateExpressions: проверка статусов выражений")
 	for exprID, expr := range tm.Expressions {
 		if expr.Status == "completed" {
+			log.Printf("TaskManager.updateExpressions: выражение %s уже выполнено, пропускаем", exprID)
 			continue
 		}
 
@@ -163,72 +192,92 @@ func (tm *TaskManager) updateExpressions() {
 			exprID = expr.ID
 		}
 
-		// Проверяем завершенность всех задач для данного выражения
-		allTasksDone := true
-		for taskID := range tm.Tasks {
-			if tm.TaskToExpr[taskID] == exprID {
-				allTasksDone = false
-				log.Printf("TaskManager.updateExpressions: выражение %s - есть незавершенные задачи", exprID)
-				break
+		// Считаем количество связанных задач для этого выражения
+		relatedTasks := 0
+		activeTasks := 0
+		processingTasksCount := 0
+		completedTasks := 0
+
+		// Подсчитываем задачи по типам
+		for taskID, exprID2 := range tm.TaskToExpr {
+			if exprID2 == exprID {
+				relatedTasks++
+
+				if _, exists := tm.Tasks[taskID]; exists {
+					// Задача активна (еще не выполнена)
+					activeTasks++
+					log.Printf("TaskManager.updateExpressions: выражение %s - задача #%d в списке активных", exprID, taskID)
+
+					// Проверяем, обрабатывается ли она сейчас
+					if tm.processingTask(taskID) {
+						processingTasksCount++
+						log.Printf("TaskManager.updateExpressions: выражение %s - задача #%d в процессе обработки", exprID, taskID)
+					}
+				} else if _, hasResult := tm.Results[taskID]; hasResult {
+					// Задача выполнена, есть результат
+					completedTasks++
+					log.Printf("TaskManager.updateExpressions: выражение %s - задача #%d имеет сохраненный результат", exprID, taskID)
+				}
 			}
 		}
 
-		if allTasksDone {
+		log.Printf("TaskManager.updateExpressions: для выражения %s найдено %d связанных задач", exprID, relatedTasks)
+		log.Printf("TaskManager.updateExpressions: выражение %s - статистика: %d активных, %d в обработке, %d выполнено",
+			exprID, activeTasks, processingTasksCount, completedTasks)
+
+		// Проверяем задачи в очереди готовых для этого выражения
+		readyTasksForExpr := 0
+		for _, task := range tm.ReadyTasks {
+			if tm.TaskToExpr[task.ID] == exprID {
+				readyTasksForExpr++
+				log.Printf("TaskManager.updateExpressions: выражение %s - задача #%d в очереди готовых", exprID, task.ID)
+			}
+		}
+		log.Printf("TaskManager.updateExpressions: выражение %s имеет %d задач в очереди готовых", exprID, readyTasksForExpr)
+
+		// Если нет активных задач и нет задач в обработке, но есть выполненные задачи,
+		// и все задачи для выражения обработаны, то выражение выполнено
+		if activeTasks == 0 && processingTasksCount == 0 && completedTasks > 0 && readyTasksForExpr == 0 {
 			log.Printf("TaskManager.updateExpressions: все задачи для выражения %s выполнены", exprID)
 
-			// Ищем финальный результат, связанный с этим выражением
+			// Ищем финальный результат - берем результат последней задачи
+			var lastTaskID int = -1
 			var lastResult float64
-			foundResult := false
 
-			// Проверяем все результаты, которые связаны с этим выражением
-			for taskID, result := range tm.Results {
-				if tm.TaskToExpr[taskID] == exprID {
-					lastResult = result
-					foundResult = true
-					log.Printf("TaskManager.updateExpressions: найден результат %f для выражения %s", result, exprID)
-					break // Берем первый найденный результат
-				}
-			}
-
-			// Если не найдено ни одного результата, но в TaskToExpr есть записи для этого выражения,
-			// значит задачи были созданы, но результаты не были правильно связаны
-			if !foundResult {
-				log.Printf("TaskManager.updateExpressions: результаты для выражения %s не найдены, проверяем связи", exprID)
-
-				// Проверяем, есть ли задачи, связанные с этим выражением
-				hasRelatedTasks := false
-				for taskID, exprID2 := range tm.TaskToExpr {
-					if exprID2 == exprID {
-						hasRelatedTasks = true
-						log.Printf("TaskManager.updateExpressions: найдена связь задачи %d с выражением %s", taskID, exprID)
-						break
-					}
-				}
-
-				// Если задачи были связаны с этим выражением, но результатов нет,
-				// и все задачи выполнены (allTasksDone = true), значит что-то пошло не так
-				if hasRelatedTasks {
-					log.Printf("TaskManager.updateExpressions: есть связанные задачи, ищем любой результат")
-
-					// Берем последний добавленный результат как запасной вариант
-					for _, res := range tm.Results {
-						lastResult = res
-						foundResult = true
-						log.Printf("TaskManager.updateExpressions: взят первый доступный результат %f", res)
-						break
+			// Находим ID последней задачи для этого выражения
+			for taskID, exprID2 := range tm.TaskToExpr {
+				if exprID2 == exprID && taskID > lastTaskID {
+					if _, hasResult := tm.Results[taskID]; hasResult {
+						lastTaskID = taskID
+						lastResult = tm.Results[taskID]
+						log.Printf("TaskManager.updateExpressions: найден результат задачи #%d: %f для выражения %s",
+							taskID, lastResult, exprID)
 					}
 				}
 			}
 
-			if foundResult {
-				log.Printf("TaskManager.updateExpressions: обновляем статус выражения %s на completed, результат %f", exprID, lastResult)
+			if lastTaskID != -1 {
+				log.Printf("TaskManager.updateExpressions: обновляем статус выражения %s на completed, результат %f (от задачи #%d)",
+					exprID, lastResult, lastTaskID)
 				expr.Status = "completed"
 				expr.Result = lastResult
 			} else {
-				log.Printf("TaskManager.updateExpressions: результат для выражения %s не найден, оставляем статус %s", exprID, expr.Status)
+				log.Printf("TaskManager.updateExpressions: не удалось найти результат для выражения %s", exprID)
+			}
+		} else if activeTasks > 0 {
+			// Если есть активные задачи, выводим их для отладки
+			for taskID := range tm.Tasks {
+				if tm.TaskToExpr[taskID] == exprID {
+					log.Printf("Для выражения %s осталась невыполненная задача #%d", exprID, taskID)
+				}
 			}
 		}
 	}
+}
+
+// Проверяет, обрабатывается ли задача в данный момент
+func (tm *TaskManager) processingTask(taskID int) bool {
+	return isTaskProcessing(taskID)
 }
 
 // Проверяет, могут ли быть сразу вычислены аргументы задачи
