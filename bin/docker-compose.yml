@@ -1,0 +1,64 @@
+
+
+services:
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+    container_name: calc-orchestrator
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    volumes:
+      - ./data:/app/data
+      - ./web:/app/web
+    environment:
+      - DB_PATH=/app/data/calculator.db
+      - STATIC_DIR=/app/web/static
+      - TEMPLATE_DIR=/app/web/templates
+      - CGO_ENABLED=1
+    restart: unless-stopped
+    networks:
+      - calc-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  agent1:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: calc-agent1
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    environment:
+      - COMPUTING_POWER=5
+      - GRPC_SERVER=orchestrator:50051
+      - CGO_ENABLED=1
+    restart: unless-stopped
+    networks:
+      - calc-network
+
+  agent2:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: calc-agent2
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+    environment:
+      - COMPUTING_POWER=5
+      - GRPC_SERVER=orchestrator:50051
+      - CGO_ENABLED=1
+    restart: unless-stopped
+    networks:
+      - calc-network
+
+networks:
+  calc-network:
+    driver: bridge 

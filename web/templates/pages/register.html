@@ -1,0 +1,90 @@
+{{define "title"}}Регистрация - Распределенный калькулятор{{end}}
+
+{{define "content"}}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h3>Регистрация</h3>
+            </div>
+            <div class="card-body">
+                <form id="register-form">
+                    <div class="mb-3">
+                        <label for="login" class="form-label">Логин</label>
+                        <input type="text" class="form-control" id="login" name="login" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Пароль</label>
+                        <input type="password" class="form-control" id="password" name="password" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="password-confirm" class="form-label">Подтверждение пароля</label>
+                        <input type="password" class="form-control" id="password-confirm" name="password-confirm" required>
+                    </div>
+                    <div class="alert alert-danger d-none" id="register-error"></div>
+                    <div class="alert alert-success d-none" id="register-success">Регистрация прошла успешно! <a href="/login">Войдите</a> в систему.</div>
+                    <button type="submit" class="btn btn-primary">Зарегистрироваться</button>
+                </form>
+            </div>
+            <div class="card-footer text-muted">
+                Уже есть аккаунт? <a href="/login">Войдите</a>
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const registerForm = document.getElementById('register-form');
+        const registerError = document.getElementById('register-error');
+        const registerSuccess = document.getElementById('register-success');
+
+        registerForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const login = document.getElementById('login').value;
+            const password = document.getElementById('password').value;
+            const passwordConfirm = document.getElementById('password-confirm').value;
+            
+            // Проверка совпадения паролей
+            if (password !== passwordConfirm) {
+                registerError.textContent = 'Пароли не совпадают';
+                registerError.classList.remove('d-none');
+                registerSuccess.classList.add('d-none');
+                return;
+            }
+            
+            try {
+                registerError.classList.add('d-none');
+                registerSuccess.classList.add('d-none');
+                
+                const response = await fetch('/api/v1/register', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        login: login,
+                        password: password
+                    })
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || 'Ошибка регистрации');
+                }
+                
+                // Отображаем сообщение об успехе
+                registerSuccess.classList.remove('d-none');
+                registerForm.reset();
+            } catch (error) {
+                // Отображаем ошибку
+                registerError.textContent = error.message || 'Ошибка регистрации. Попробуйте другой логин.';
+                registerError.classList.remove('d-none');
+            }
+        });
+    });
+</script>
+{{end}} 

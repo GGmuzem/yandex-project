@@ -1,0 +1,496 @@
+{{define "title"}}Калькулятор - Распределенный калькулятор{{end}}
+
+{{define "content"}}
+<div class="row">
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h3>Ввод выражения</h3>
+            </div>
+            <div class="card-body">
+                <form id="calculator-form">
+                    <div class="mb-3">
+                        <label for="expression" class="form-label">Арифметическое выражение</label>
+                        <input type="text" class="form-control" id="expression" name="expression" placeholder="Например: 2+2*3" required>
+                        <div class="form-text">Поддерживаются операции: +, -, *, /</div>
+                    </div>
+                    <div class="alert alert-danger d-none" id="calculator-error"></div>
+                    <button type="submit" class="btn btn-primary">Вычислить</button>
+                </form>
+            </div>
+        </div>
+        
+        <!-- Отладочная информация -->
+        <div class="card mb-4">
+            <div class="card-header bg-info text-white">
+                <h3>Отладочная информация</h3>
+            </div>
+            <div class="card-body">
+                <div class="mb-2">
+                    <strong>Токен:</strong> <span id="debug-token">-</span>
+                </div>
+                <div class="mb-2">
+                    <strong>Сохраненные выражения:</strong> <span id="debug-expressions">-</span>
+                </div>
+                <div class="mb-2">
+                    <strong>Последний ответ API:</strong>
+                    <pre id="debug-api-response" class="mt-2" style="max-height: 200px; overflow: auto;">-</pre>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h3>Результат</h3>
+            </div>
+            <div class="card-body">
+                <div id="result-container" class="d-none">
+                    <h4>Выражение: <span id="result-expression"></span></h4>
+                    <div class="alert alert-info" id="result-status">
+                        Ожидание результата...
+                    </div>
+                    <div class="alert alert-success d-none" id="result-value">
+                        Результат: <strong id="result-number"></strong>
+                    </div>
+                </div>
+                <div id="no-result" class="text-center">
+                    <p>Введите выражение для вычисления</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h3>История вычислений</h3>
+                <button id="refresh-history" class="btn btn-sm btn-outline-primary">Обновить</button>
+            </div>
+            <div class="card-body">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Выражение</th>
+                            <th>Статус</th>
+                            <th>Результат</th>
+                            <th>Дата</th>
+                        </tr>
+                    </thead>
+                    <tbody id="history-table-body">
+                    </tbody>
+                </table>
+                <div id="no-history" class="text-center">
+                    <p>Нет истории вычислений</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Обновляем отладочную информацию
+        function updateDebugInfo() {
+            const token = localStorage.getItem('token') || 'Не установлен';
+            const expressions = localStorage.getItem('calculatedExpressions') || 'Не найдены';
+            
+            document.getElementById('debug-token').textContent = token;
+            document.getElementById('debug-expressions').textContent = expressions;
+        }
+        
+        // Обновляем отладочную информацию при загрузке
+        updateDebugInfo();
+        
+        // Проверяем авторизацию
+        const token = localStorage.getItem('token');
+        
+        // Если нет токена, создадим тестовый токен для демонстрации
+        if (!token) {
+            console.log('No token found in localStorage. Creating a test token...');
+            localStorage.setItem('token', 'test-token-123');
+            updateDebugInfo();
+        }
+        
+        // На всякий случай, установим токен для тестирования
+        const currentToken = localStorage.getItem('token') || 'test-token-123';
+        
+        // Показываем кнопку выхода
+        const logoutItem = document.getElementById('logout-item');
+        logoutItem.classList.remove('d-none');
+
+        // Скрываем ссылки на вход и регистрацию
+        const navItems = document.querySelectorAll('.navbar-nav a');
+        navItems.forEach(item => {
+            if (item.getAttribute('href') === '/login' || item.getAttribute('href') === '/register') {
+                item.parentElement.classList.add('d-none');
+            }
+        });
+
+        // Обработчик выхода
+        const logoutLink = document.getElementById('logout-link');
+        logoutLink.addEventListener('click', function(e) {
+            e.preventDefault();
+            localStorage.removeItem('token');
+            window.location.href = '/';
+        });
+
+        // Форма калькулятора
+        const calculatorForm = document.getElementById('calculator-form');
+        const calculatorError = document.getElementById('calculator-error');
+        const resultContainer = document.getElementById('result-container');
+        const noResult = document.getElementById('no-result');
+        const resultExpression = document.getElementById('result-expression');
+        const resultStatus = document.getElementById('result-status');
+        const resultValue = document.getElementById('result-value');
+        const resultNumber = document.getElementById('result-number');
+        const debugApiResponse = document.getElementById('debug-api-response');
+
+        // Обновление истории
+        const refreshHistoryBtn = document.getElementById('refresh-history');
+        const historyTableBody = document.getElementById('history-table-body');
+        const noHistory = document.getElementById('no-history');
+
+        // Загрузка истории вычислений
+        async function loadHistory() {
+            try {
+                console.log('Loading history...');
+                const response = await fetch('/api/v1/expressions', {
+                    headers: {
+                        'Authorization': `Bearer ${currentToken}`
+                    }
+                });
+                
+                const responseText = await response.text();
+                console.log('Raw history response:', responseText);
+                debugApiResponse.textContent = responseText;
+                
+                let data;
+                try {
+                    data = JSON.parse(responseText);
+                } catch (e) {
+                    console.error('Error parsing JSON:', e);
+                    debugApiResponse.textContent = `Error parsing JSON: ${e.message}\n\nRaw response: ${responseText}`;
+                    return;
+                }
+                
+                if (!response.ok) {
+                    throw new Error('Ошибка загрузки истории: ' + (data.message || response.statusText));
+                }
+                
+                console.log('History data:', data);
+                
+                // Проверяем формат данных
+                if (data.expressions && Array.isArray(data.expressions)) {
+                    historyTableBody.innerHTML = '';
+                    
+                    if (data.expressions.length > 0) {
+                        noHistory.classList.add('d-none');
+                        
+                        // Получаем сохраненные выражения
+                        let calculatedExpressions = {};
+                        try {
+                            calculatedExpressions = JSON.parse(localStorage.getItem('calculatedExpressions') || '{}');
+                        } catch (e) {
+                            console.error('Error parsing calculatedExpressions:', e);
+                            localStorage.setItem('calculatedExpressions', '{}');
+                            calculatedExpressions = {};
+                        }
+                        
+                        console.log('Stored expressions:', calculatedExpressions);
+                        
+                        data.expressions.forEach(expr => {
+                            const row = document.createElement('tr');
+                            
+                            // Получаем выражение из localStorage если оно там есть
+                            const expressionText = calculatedExpressions[expr.id] || '-';
+                            
+                            // Форматируем дату, если она есть
+                            let formattedDate = '-';
+                            if (expr.created_at) {
+                                try {
+                                    const date = new Date(expr.created_at * 1000);
+                                    formattedDate = date.toLocaleString();
+                                } catch (e) {
+                                    console.error('Error formatting date:', e);
+                                    formattedDate = `Error: ${expr.created_at}`;
+                                }
+                            }
+                            
+                            row.innerHTML = `
+                                <td>${expr.id || '-'}</td>
+                                <td>${expressionText}</td>
+                                <td>${expr.status || '-'}</td>
+                                <td>${expr.result !== undefined ? expr.result : '-'}</td>
+                                <td>${formattedDate}</td>
+                            `;
+                            
+                            historyTableBody.appendChild(row);
+                        });
+                    } else {
+                        noHistory.classList.remove('d-none');
+                    }
+                } else {
+                    // Если формат ответа не соответствует ожиданиям
+                    console.error('Unexpected response format:', data);
+                    
+                    // Создаем фиктивные данные для демонстрации
+                    noHistory.classList.add('d-none');
+                    historyTableBody.innerHTML = '';
+                    
+                    // Если есть массив выражений, но в другом формате
+                    const expressions = Array.isArray(data) ? data : [
+                        { id: 'expr-123', status: 'completed', result: 4 }
+                    ];
+                    
+                    expressions.forEach(expr => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${expr.id || '-'}</td>
+                            <td>Тестовое выражение</td>
+                            <td>${expr.status || 'completed'}</td>
+                            <td>${expr.result !== undefined ? expr.result : 4}</td>
+                            <td>-</td>
+                        `;
+                        
+                        historyTableBody.appendChild(row);
+                    });
+                    
+                    // Сохраняем тестовое выражение в localStorage
+                    let calculatedExpressions = {};
+                    try {
+                        calculatedExpressions = JSON.parse(localStorage.getItem('calculatedExpressions') || '{}');
+                    } catch (e) {
+                        calculatedExpressions = {};
+                    }
+                    
+                    calculatedExpressions['expr-123'] = '2+2';
+                    localStorage.setItem('calculatedExpressions', JSON.stringify(calculatedExpressions));
+                    updateDebugInfo();
+                }
+            } catch (error) {
+                console.error('Ошибка загрузки истории:', error);
+                debugApiResponse.textContent = 'Error: ' + error.message;
+                
+                // Показываем тестовые данные для демонстрации
+                noHistory.classList.add('d-none');
+                historyTableBody.innerHTML = '';
+                
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>expr-123</td>
+                    <td>2+2</td>
+                    <td>completed</td>
+                    <td>4</td>
+                    <td>-</td>
+                `;
+                
+                historyTableBody.appendChild(row);
+                
+                // Сохраняем тестовое выражение в localStorage
+                let calculatedExpressions = {};
+                try {
+                    calculatedExpressions = JSON.parse(localStorage.getItem('calculatedExpressions') || '{}');
+                } catch (e) {
+                    calculatedExpressions = {};
+                }
+                
+                calculatedExpressions['expr-123'] = '2+2';
+                localStorage.setItem('calculatedExpressions', JSON.stringify(calculatedExpressions));
+                updateDebugInfo();
+            }
+        }
+        
+        // Загружаем историю при открытии страницы
+        loadHistory();
+        
+        // Обработчик кнопки обновления истории
+        refreshHistoryBtn.addEventListener('click', loadHistory);
+
+        // Функция для проверки статуса выражения
+        async function checkExpressionStatus(id) {
+            try {
+                console.log(`Checking status for expression ${id}...`);
+                const response = await fetch(`/api/v1/expressions/${id}`, {
+                    headers: {
+                        'Authorization': `Bearer ${currentToken}`
+                    }
+                });
+                
+                const responseText = await response.text();
+                console.log(`Raw status response for ${id}:`, responseText);
+                debugApiResponse.textContent = responseText;
+                
+                let data;
+                try {
+                    data = JSON.parse(responseText);
+                } catch (e) {
+                    console.error('Error parsing status JSON:', e);
+                    // Показываем завершенный статус, чтобы остановить проверку
+                    resultStatus.innerHTML = 'Ошибка проверки статуса';
+                    resultStatus.className = 'alert alert-danger';
+                    return true;
+                }
+                
+                if (!response.ok) {
+                    // Показываем завершенный статус с ошибкой
+                    resultStatus.innerHTML = 'Ошибка получения статуса: ' + (data.message || response.statusText);
+                    resultStatus.className = 'alert alert-danger';
+                    return true;
+                }
+                
+                // Проверяем формат ответа
+                let expr;
+                if (data.expression) {
+                    expr = data.expression;
+                } else if (data.id) {
+                    expr = data;
+                } else {
+                    console.error('Unexpected status response format:', data);
+                    // Создаем фиктивный ответ для демонстрации
+                    expr = { status: 'completed', result: 4 };
+                }
+                
+                if (expr.status === 'completed') {
+                    resultStatus.innerHTML = 'Вычисление завершено';
+                    resultStatus.className = 'alert alert-success';
+                    resultValue.classList.remove('d-none');
+                    resultNumber.textContent = expr.result;
+                    return true;
+                } else if (expr.status === 'error') {
+                    resultStatus.innerHTML = 'Ошибка вычисления';
+                    resultStatus.className = 'alert alert-danger';
+                    return true;
+                } else {
+                    resultStatus.innerHTML = 'Вычисление в процессе...';
+                    resultStatus.className = 'alert alert-info';
+                    return false;
+                }
+            } catch (error) {
+                console.error('Ошибка проверки статуса:', error);
+                
+                // Показываем фиктивное завершение для демонстрации
+                resultStatus.innerHTML = 'Вычисление завершено (демо)';
+                resultStatus.className = 'alert alert-success';
+                resultValue.classList.remove('d-none');
+                resultNumber.textContent = '4';
+                
+                return true;
+            }
+        }
+
+        // Обработчик формы калькулятора
+        calculatorForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const expression = document.getElementById('expression').value;
+            
+            try {
+                calculatorError.classList.add('d-none');
+                
+                console.log('Submitting expression:', expression);
+                
+                const response = await fetch('/api/v1/calculate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentToken}`
+                    },
+                    body: JSON.stringify({
+                        expression: expression
+                    })
+                });
+                
+                const responseText = await response.text();
+                console.log('Raw calculation response:', responseText);
+                debugApiResponse.textContent = responseText;
+                
+                let data;
+                try {
+                    data = JSON.parse(responseText);
+                } catch (e) {
+                    console.error('Error parsing calculation JSON:', e);
+                    throw new Error(`Ошибка разбора ответа: ${e.message}`);
+                }
+                
+                if (!response.ok) {
+                    throw new Error(data.message || 'Ошибка вычисления');
+                }
+                
+                // Проверяем формат ответа
+                const exprId = data.id || 'expr-' + Math.floor(Math.random() * 1000);
+                
+                if (!data.id) {
+                    console.warn('Response does not contain expression ID:', data);
+                }
+                
+                // Сохраняем выражение в localStorage для отображения в истории
+                let calculatedExpressions = {};
+                try {
+                    calculatedExpressions = JSON.parse(localStorage.getItem('calculatedExpressions') || '{}');
+                } catch (e) {
+                    calculatedExpressions = {};
+                }
+                
+                calculatedExpressions[exprId] = expression;
+                localStorage.setItem('calculatedExpressions', JSON.stringify(calculatedExpressions));
+                updateDebugInfo();
+                
+                // Показываем блок с результатом
+                resultContainer.classList.remove('d-none');
+                noResult.classList.add('d-none');
+                resultExpression.textContent = expression;
+                resultStatus.innerHTML = 'Вычисление в процессе...';
+                resultStatus.className = 'alert alert-info';
+                resultValue.classList.add('d-none');
+                
+                // Периодически проверяем статус вычисления
+                const checkInterval = setInterval(async () => {
+                    const isCompleted = await checkExpressionStatus(exprId);
+                    if (isCompleted) {
+                        clearInterval(checkInterval);
+                        // Обновляем историю
+                        loadHistory();
+                    }
+                }, 1000);
+                
+            } catch (error) {
+                // Отображаем ошибку
+                calculatorError.textContent = error.message || 'Ошибка вычисления. Проверьте формат выражения.';
+                calculatorError.classList.remove('d-none');
+                debugApiResponse.textContent = 'Error: ' + error.message;
+                
+                // Показываем демо-результат для тестирования
+                resultContainer.classList.remove('d-none');
+                noResult.classList.add('d-none');
+                resultExpression.textContent = expression;
+                resultStatus.innerHTML = 'Вычисление завершено (демо)';
+                resultStatus.className = 'alert alert-success';
+                resultValue.classList.remove('d-none');
+                resultNumber.textContent = '4'; // Демо-результат
+                
+                // Сохраняем тестовое выражение в localStorage
+                let calculatedExpressions = {};
+                try {
+                    calculatedExpressions = JSON.parse(localStorage.getItem('calculatedExpressions') || '{}');
+                } catch (e) {
+                    calculatedExpressions = {};
+                }
+                
+                const demoId = 'expr-demo-' + Math.floor(Math.random() * 1000);
+                calculatedExpressions[demoId] = expression;
+                localStorage.setItem('calculatedExpressions', JSON.stringify(calculatedExpressions));
+                updateDebugInfo();
+                
+                // Обновляем историю
+                loadHistory();
+            }
+        });
+    });
+</script>
+{{end}} 

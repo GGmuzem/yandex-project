@@ -1,164 +1,176 @@
-# Распределённый вычислитель арифметических выражений
+# Калькулятор выражений
 
-Проект представляет собой распределённую систему для вычисления сложных арифметических выражений. Система эффективно разбивает выражения на атомарные операции, распределяет их между вычислительными агентами и собирает результаты, соблюдая все зависимости между операциями.
+Проект представляет собой распределенную систему для вычисления математических выражений, состоящую из оркестратора и агентов.
 
-## Возможности системы
+## Компоненты системы
 
-- Поддержка сложных математических выражений с множественными уровнями вложенности
-- Автоматическое разбиение выражений на атомарные операции
-- Параллельное выполнение независимых операций
-- Корректная обработка зависимостей между операциями
-- Масштабируемость через добавление дополнительных агентов
-- Настраиваемое время выполнения операций
-- REST API для взаимодействия с системой
-
-## Архитектура системы
-
-Система построена на основе архитектуры оркестратор-агент:
-
-1. **Оркестратор**:
-   - Принимает и парсит математические выражения
-   - Разбивает выражения на атомарные операции
-   - Управляет зависимостями между операциями
+1. **Оркестратор** - центральный компонент, который:
+   - Разбирает математические выражения на отдельные задачи
+   - Управляет очередью задач
    - Распределяет задачи между агентами
-   - Собирает и агрегирует результаты
-   - Предоставляет REST API для внешнего взаимодействия
+   - Предоставляет API для взаимодействия с пользователями
 
-2. **Агент**:
-   - Получает задачи от оркестратора
-   - Выполняет атомарные математические операции
-   - Возвращает результаты оркестратору
-   - Поддерживает параллельное выполнение операций
-   - Масштабируется через настройку количества воркеров
+2. **Агенты** - вычислительные узлы, которые:
+   - Подключаются к оркестратору по gRPC
+   - Выполняют задачи, полученные от оркестратора
+   - Возвращают результаты вычислений обратно в оркестратор
 
+3. **Простой сервер** - упрощенная версия оркестратора для тестирования API
 
+## Возможности
 
-## Требования
+- Регистрация и авторизация пользователей с JWT-токенами
+- Вычисление математических выражений
+- Сохранение истории выражений и их результатов
+- Web-интерфейс для удобного использования
+- Масштабирование системы за счет добавления агентов
+- Поддержка параллельных вычислений
 
-- Go 1.16 или выше
-- Доступ к localhost для HTTP-запросов
+## Сборка и запуск
 
-## Установка и запуск
+### Сборка исполняемых файлов
 
-1. Клонировать репозиторий:
-   ```bash
-   git clone https://github.com/your-username/yandex-project.git
-   cd yandex-project
-   ```
+```bash
+go build -o orchestrator.exe ./cmd/orchestrator
+go build -o agent.exe ./cmd/agent
+go build -o simple_server.exe simple_server.go
+```
 
-2. **Запуск оркестратора**:
-   ```bash
-   go run ./cmd/orchestrator/main.go
-   ```
-   
-   Оркестратор запустится на порту 8080 по умолчанию.
+### Запуск без Docker
 
-3. **Запуск агента** (в новом терминале):
-   ```bash
-   # Для Linux/Mac:
-   COMPUTING_POWER=3 go run ./cmd/agent/main.go
-   
-   # Для Windows (PowerShell):
-   $env:COMPUTING_POWER=3; go run ./cmd/agent/main.go
-   
-   # Для Windows (CMD):
-   set COMPUTING_POWER=3
-   go run ./cmd/agent/main.go
-   ```
+1. Запуск оркестратора:
+```bash
+./orchestrator.exe
+```
 
-   Где `COMPUTING_POWER` - количество горутин (вычислительных потоков) агента.
+2. Запуск агента:
+```bash
+./agent.exe
+```
 
-4. **Настройка времени операций** (опционально):
-   ```bash
-   # Для Linux/Mac:
-   TIME_ADDITION_MS=100 TIME_SUBTRACTION_MS=100 TIME_MULTIPLICATIONS_MS=200 TIME_DIVISIONS_MS=200 go run ./cmd/orchestrator/main.go
-   
-   # Для Windows (PowerShell):
-   $env:TIME_ADDITION_MS=100; $env:TIME_SUBTRACTION_MS=100; $env:TIME_MULTIPLICATIONS_MS=200; $env:TIME_DIVISIONS_MS=200; go run ./cmd/orchestrator/main.go
-   
-   # Для Windows (CMD):
-   set TIME_ADDITION_MS=100
-   set TIME_SUBTRACTION_MS=100
-   set TIME_MULTIPLICATIONS_MS=200
-   set TIME_DIVISIONS_MS=200
-   go run ./cmd/orchestrator/main.go
-   ```
+3. Запуск упрощенного сервера:
+```bash
+./simple_server.exe
+```
 
-## Примеры использования API
+### Запуск с Docker
 
-1. **Вычисление простого выражения**:
-   ```bash
-   # С помощью curl
-   curl -X POST 'localhost:8080/api/v1/calculate' \
-   -H 'Content-Type: application/json' \
-   -d '{"expression": "2 + 2 * 2"}'
-   
-   # С помощью PowerShell
-   Invoke-RestMethod -Method POST -Uri "http://localhost:8080/api/v1/calculate" -ContentType "application/json" -Body '{"expression": "2 + 2 * 2"}'
-   ```
+1. Сборка и запуск контейнеров:
+```bash
+docker-compose up -d
+```
 
-   Ответ: 
-   ```json
-   {"id": "expr id:0"}
-   ```
+2. Остановка контейнеров:
+```bash
+docker-compose down
+```
 
-2. **Вычисление сложного выражения**:
-   ```bash
-   # С помощью PowerShell
-   $body = @{
-       "expression" = "((((25 / 5) * 3) + ((15 - 7) * 4)) / (((10 + 2) * 2) - 5)) * (((8 * 2) - 3) + ((20 / 4) * 3))"
-   } | ConvertTo-Json
-   
-   Invoke-RestMethod -Method POST -Uri "http://localhost:8080/api/v1/calculate" -ContentType "application/json" -Body $body
-   ```
+## API
 
-3. **Получить список выражений**:
-   ```bash
-   # С помощью curl
-   curl 'localhost:8080/api/v1/expressions'
-   
-   # С помощью PowerShell
-   Invoke-RestMethod -Uri "http://localhost:8080/api/v1/expressions"
-   ```
+### Регистрация
 
-   Ответ (после вычисления):
-   ```json
-   {
-     "expressions": [
-       {"id": "expr id:0", "status": "completed", "result": 6},
-       {"id": "expr id:1", "status": "completed", "result": 40}
-     ]
-   }
-   ```
+```
+POST /api/v1/register
+Content-Type: application/json
 
-4. **Получить статус конкретного выражения**:
-   ```bash
-   # С помощью PowerShell
-   Invoke-RestMethod -Uri "http://localhost:8080/api/v1/expressions/expr id:0"
-   ```
+{
+  "login": "username",
+  "password": "password"
+}
+```
 
-   Ответ:
-   ```json
-   {"expression": {"id": "expr id:0", "status": "completed", "result": 6}}
-   ```
+### Авторизация
+
+```
+POST /api/v1/login
+Content-Type: application/json
+
+{
+  "login": "username",
+  "password": "password"
+}
+```
+
+Ответ содержит JWT-токен:
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+### Вычисление выражения
+
+```
+POST /api/v1/calculate
+Content-Type: application/json
+Authorization: Bearer <token>
+
+{
+  "expression": "2+2*2"
+}
+```
+
+Ответ содержит ID выражения:
+```json
+{
+  "id": "expr-123"
+}
+```
+
+### Получение результата выражения
+
+```
+GET /api/v1/expressions/expr-123
+Authorization: Bearer <token>
+```
+
+Ответ содержит информацию о выражении:
+```json
+{
+  "id": "expr-123",
+  "status": "completed",
+  "result": 6
+}
+```
+
+### Получение списка выражений
+
+```
+GET /api/v1/expressions
+Authorization: Bearer <token>
+```
+
+## Примеры использования (PowerShell)
+
+```powershell
+# Регистрация
+$registerResponse = Invoke-WebRequest -Method POST -Uri "http://localhost:8080/api/v1/register" -ContentType "application/json" -Body '{"login":"test","password":"password"}'
+
+# Авторизация
+$loginResponse = Invoke-WebRequest -Method POST -Uri "http://localhost:8080/api/v1/login" -ContentType "application/json" -Body '{"login":"test","password":"password"}'
+$token = ($loginResponse.Content | ConvertFrom-Json).token
+
+# Расчет выражения
+$calcResponse = Invoke-WebRequest -Method POST -Uri "http://localhost:8080/api/v1/calculate" -ContentType "application/json" -Headers @{"Authorization"="Bearer $token"} -Body '{"expression":"2+2"}'
+$exprId = ($calcResponse.Content | ConvertFrom-Json).id
+
+# Получение результата
+Invoke-WebRequest -Method GET -Uri "http://localhost:8080/api/v1/expressions/$exprId" -Headers @{"Authorization"="Bearer $token"}
+
+# Получение списка выражений
+Invoke-WebRequest -Method GET -Uri "http://localhost:8080/api/v1/expressions" -Headers @{"Authorization"="Bearer $token"}
+```
 
 ## Особенности реализации
 
-- **Парсер выражений**:
-  - Поддержка сложных математических выражений
-  - Корректная обработка вложенных скобок
-  - Соблюдение приоритетов операций
-  - Преобразование в постфиксную нотацию
+1. **Многопользовательский режим** - каждый пользователь имеет свою историю выражений
+2. **Персистентность данных** - все данные сохраняются в БД SQLite
+3. **gRPC коммуникация** - взаимодействие между оркестратором и агентами
+4. **In-memory режим** - возможность работы без SQLite (без CGO)
+5. **Docker-контейнеры** - готовая к развертыванию система
 
-- **Система управления задачами**:
-  - Автоматическое определение зависимостей
-  - Параллельное выполнение независимых операций
-  - Эффективное распределение нагрузки
-  - Отслеживание статуса выполнения
+## Требования
 
-- **Масштабируемость**:
-  - Возможность добавления новых агентов
-  - Настройка количества воркеров
-  - Конфигурируемое время операций
-  - Балансировка нагрузки
-
+- Go 1.21 или выше
+- Для полной функциональности с SQLite необходим CGO (компилятор C)
+- Для запуска в Docker необходим Docker и Docker Compose

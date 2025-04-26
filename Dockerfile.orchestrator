@@ -1,0 +1,44 @@
+FROM golang:1.21-alpine AS build
+
+WORKDIR /app
+
+# Устанавливаем необходимые пакеты для CGO и SQLite
+RUN apk add --no-cache gcc musl-dev sqlite-dev
+
+# Копируем go.mod и go.sum для предзагрузки зависимостей
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Копируем исходный код
+COPY . .
+
+# Собираем оркестратор с поддержкой CGO
+RUN CGO_ENABLED=1 GOOS=linux go build -a -tags netgo -ldflags '-w -extldflags "-static"' -o orchestrator ./cmd/orchestrator
+
+# Окончательный образ
+FROM alpine:latest
+
+# Устанавливаем необходимые пакеты для SQLite
+RUN apk add --no-cache ca-certificates sqlite-libs
+
+WORKDIR /app
+
+# Копируем собранный бинарный файл
+COPY --from=build /app/orchestrator ./orchestrator
+
+# Копируем веб-интерфейс
+COPY --from=build /app/web /app/web
+
+# Создаем директорию для данных
+RUN mkdir -p /app/data
+
+# Переменные окружения
+ENV DB_PATH=/app/data/calculator.db
+ENV STATIC_DIR=/app/web/static
+ENV TEMPLATE_DIR=/app/web/templates
+
+# Открываем порты
+EXPOSE 8080
+EXPOSE 50051
+
+CMD ["./orchestrator"] 

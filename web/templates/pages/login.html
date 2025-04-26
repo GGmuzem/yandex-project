@@ -1,0 +1,78 @@
+{{define "title"}}Вход - Распределенный калькулятор{{end}}
+
+{{define "content"}}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h3>Вход в систему</h3>
+            </div>
+            <div class="card-body">
+                <form id="login-form">
+                    <div class="mb-3">
+                        <label for="login" class="form-label">Логин</label>
+                        <input type="text" class="form-control" id="login" name="login" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Пароль</label>
+                        <input type="password" class="form-control" id="password" name="password" required>
+                    </div>
+                    <div class="alert alert-danger d-none" id="login-error"></div>
+                    <button type="submit" class="btn btn-primary">Войти</button>
+                </form>
+            </div>
+            <div class="card-footer text-muted">
+                Еще нет аккаунта? <a href="/register">Зарегистрируйтесь</a>
+            </div>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const loginForm = document.getElementById('login-form');
+        const loginError = document.getElementById('login-error');
+
+        loginForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const login = document.getElementById('login').value;
+            const password = document.getElementById('password').value;
+            
+            try {
+                loginError.classList.add('d-none');
+                
+                const response = await fetch('/api/v1/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        login: login,
+                        password: password
+                    })
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || 'Ошибка входа');
+                }
+                
+                const data = await response.json();
+                
+                // Сохраняем токен в localStorage
+                localStorage.setItem('token', data.token);
+                
+                // Перенаправляем на страницу калькулятора
+                window.location.href = '/calculator';
+            } catch (error) {
+                // Отображаем ошибку
+                loginError.textContent = error.message || 'Ошибка входа. Пожалуйста, проверьте логин и пароль.';
+                loginError.classList.remove('d-none');
+            }
+        });
+    });
+</script>
+{{end}} 

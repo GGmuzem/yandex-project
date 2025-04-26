@@ -40,70 +40,58 @@ func CalculateHandler(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Expression string `json:"expression"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil || input.Expression == "" {
-		http.Error(w, "Invalid data", http.StatusUnprocessableEntity)
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, "Invalid request data", http.StatusBadRequest)
 		return
 	}
 
-	exprID := "expr id:" + strconv.Itoa(exprCounter)
-	exprCounter++
-	mu.Lock()
+	log.Printf("Получено выражение для вычисления: %s", input.Expression)
+
+	// Генерируем уникальный ID для выражения
+	exprID := GenerateUniqueExpressionID()
+
+	// Создаем новое выражение
 	expressions[exprID] = &models.Expression{ID: exprID, Status: "pending"}
-	mu.Unlock()
 
+	// Парсим выражение и создаем задачи
 	go func() {
-		log.Printf("Парсинг выражения: %s", input.Expression)
-		taskList := ParseExpression(input.Expression)
+		tasks := ParseExpression(input.Expression)
+		log.Printf("Создано %d задач для выражения %s", len(tasks), exprID)
+
+		// Миграция: добавляем задачи в глобальный менеджер
+		log.Printf("МИГРАЦИЯ: Добавление задач из API в глобальный менеджер")
+		Manager.AddExpression(exprID, tasks)
+
+		// Мигрируем очередь готовых задач
 		mu.Lock()
-		log.Printf("Создание задач для выражения %s. Всего задач: %d", exprID, len(taskList))
-
-		// Отображаем все созданные задачи
-		log.Printf("Структура созданных задач для выражения %s:", exprID)
-		for i, t := range taskList {
-			log.Printf("Задача %d: ID=%d, %s %s %s, Готова: %v",
-				i+1, t.ID, t.Arg1, t.Operation, t.Arg2, isTaskReady(t))
-		}
-
-		// Создаем карту зависимостей между задачами
-		dependsOn := make(map[string][]int) // ключ: resultX, значение: список ID задач
-		for _, t := range taskList {
-			taskCounter++
-			t.ID = taskCounter
-			tasks[t.ID] = &t
-			taskToExpr[t.ID] = exprID
-
-			// Регистрируем зависимости для аргументов, которые являются результатами других задач
-			if strings.HasPrefix(t.Arg1, "result") {
-				dependsOn[t.Arg1] = append(dependsOn[t.Arg1], t.ID)
-				log.Printf("Задача #%d зависит от результата %s", t.ID, t.Arg1)
-			}
-			if strings.HasPrefix(t.Arg2, "result") {
-				dependsOn[t.Arg2] = append(dependsOn[t.Arg2], t.ID)
-				log.Printf("Задача #%d зависит от результата %s", t.ID, t.Arg2)
+		log.Printf("МИГРАЦИЯ: Всего задач в локальной очереди: %d", len(readyTasks))
+		for _, task := range readyTasks {
+			// Проверяем, не находится ли задача уже в очереди
+			found := false
+			for _, rtask := range Manager.ReadyTasks {
+				if rtask.ID == task.ID {
+					found = true
+					break
+				}
 			}
 
-			if isTaskReady(t) {
-				log.Printf("Готовая задача #%d (%s %s %s) для выражения %s добавлена в очередь",
-					t.ID, t.Arg1, t.Operation, t.Arg2, exprID)
-				readyTasks = append(readyTasks, t)
-			} else {
-				log.Printf("Задача #%d (%s %s %s) для выражения %s ожидает результатов других задач",
-					t.ID, t.Arg1, t.Operation, t.Arg2, exprID)
+			if !found && !Manager.ProcessingTasks[task.ID] {
+				Manager.ReadyTasks = append(Manager.ReadyTasks, task)
+				log.Printf("МИГРАЦИЯ: Задача #%d добавлена в очередь глобального менеджера", task.ID)
 			}
 		}
-
-		// Логируем зависимости
-		log.Printf("Карта зависимостей для выражения %s:", exprID)
-		for result, taskIDs := range dependsOn {
-			taskIDsStr := make([]string, len(taskIDs))
-			for i, id := range taskIDs {
-				taskIDsStr[i] = strconv.Itoa(id)
-			}
-			log.Printf("Результат %s нужен для задач: %s",
-				result, strings.Join(taskIDsStr, ", "))
-		}
-
 		mu.Unlock()
+
+		// Дополнительная проверка состояния
+		log.Printf("Состояние после миграции:")
+		log.Printf("- Всего задач в Manager.Tasks: %d", len(Manager.Tasks))
+		log.Printf("- Всего задач в Manager.ReadyTasks: %d", len(Manager.ReadyTasks))
+
+		// Проверяем содержимое очереди
+		for i, task := range Manager.ReadyTasks {
+			log.Printf("- Задача #%d в очереди Manager.ReadyTasks: ID=%d, %s %s %s",
+				i, task.ID, task.Arg1, task.Operation, task.Arg2)
+		}
 	}()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -152,17 +140,19 @@ func GetExpressionHandler(w http.ResponseWriter, r *http.Request) {
 
 func TaskHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
-		mu.Lock()
-		if len(readyTasks) == 0 {
-			mu.Unlock()
+		// Используем глобальный Manager для получения задач
+		Manager.mu.Lock()
+		if len(Manager.ReadyTasks) == 0 {
+			Manager.mu.Unlock()
+			log.Printf("TaskHandler GET: Нет готовых задач")
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 
 		// Ищем задачу, которая еще не в обработке
 		taskIndex := -1
-		for i, task := range readyTasks {
-			if !processingTasks[task.ID] {
+		for i, task := range Manager.ReadyTasks {
+			if !Manager.ProcessingTasks[task.ID] {
 				taskIndex = i
 				break
 			}
@@ -170,27 +160,31 @@ func TaskHandler(w http.ResponseWriter, r *http.Request) {
 
 		// Если все задачи уже в обработке, возвращаем 404
 		if taskIndex == -1 {
-			mu.Unlock()
+			Manager.mu.Unlock()
+			log.Printf("TaskHandler GET: Все задачи уже в обработке")
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
 
 		// Получаем задачу и удаляем ее из очереди
-		task := readyTasks[taskIndex]
+		task := Manager.ReadyTasks[taskIndex]
+
+		log.Printf("TaskHandler GET: Найдена задача #%d: %s %s %s",
+			task.ID, task.Arg1, task.Operation, task.Arg2)
 
 		// Если задача находится в середине очереди, перемещаем последнюю задачу на ее место
 		// и усекаем очередь
-		if taskIndex < len(readyTasks)-1 {
-			readyTasks[taskIndex] = readyTasks[len(readyTasks)-1]
+		if taskIndex < len(Manager.ReadyTasks)-1 {
+			Manager.ReadyTasks[taskIndex] = Manager.ReadyTasks[len(Manager.ReadyTasks)-1]
 		}
-		readyTasks = readyTasks[:len(readyTasks)-1]
+		Manager.ReadyTasks = Manager.ReadyTasks[:len(Manager.ReadyTasks)-1]
 
 		// Помечаем задачу как "в обработке"
-		processingTasks[task.ID] = true
+		Manager.ProcessingTasks[task.ID] = true
 
-		mu.Unlock()
+		Manager.mu.Unlock()
 
-		log.Printf("Отправляем задачу #%d агенту: %s %s %s",
+		log.Printf("TaskHandler GET: Отправляем задачу #%d агенту: %s %s %s",
 			task.ID, task.Arg1, task.Operation, task.Arg2)
 
 		w.Header().Set("Content-Type", "application/json")
@@ -202,98 +196,22 @@ func TaskHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		var result models.TaskResult
 		if err := json.NewDecoder(r.Body).Decode(&result); err != nil {
-			log.Printf("TaskHandler: ошибка декодирования тела запроса: %v", err)
+			log.Printf("TaskHandler POST: ошибка декодирования тела запроса: %v", err)
 			http.Error(w, "Invalid data", http.StatusUnprocessableEntity)
 			return
 		}
 
-		log.Printf("TaskHandler: получен результат для задачи #%d: %f", result.ID, result.Result)
+		log.Printf("TaskHandler POST: получен результат для задачи #%d: %f", result.ID, result.Result)
 
-		mu.Lock()
-		defer mu.Unlock()
+		// Используем метод AddResult из Manager для обработки результата
+		success := Manager.AddResult(result)
 
-		log.Printf("TaskHandler: начало обработки результата для задачи #%d: %f", result.ID, result.Result)
-
-		// Снимаем отметку "в обработке" с задачи
-		delete(processingTasks, result.ID)
-
-		// Проверяем, существует ли еще задача
-		task, exists := tasks[result.ID]
-		if !exists {
-			// Проверяем, может быть результат для этой задачи уже был получен
-			if _, resultExists := results[result.ID]; resultExists {
-				log.Printf("TaskHandler: результат для задачи #%d уже был получен ранее. Значение: %f. Текущий результат: %f. Игнорируем дублирующий результат.",
-					result.ID, results[result.ID], result.Result)
-				w.WriteHeader(http.StatusOK)
-				return
-			}
-
-			log.Printf("TaskHandler: задача #%d не найдена в списке активных задач", result.ID)
-			// Сохраняем результат даже для неактивной задачи
-			results[result.ID] = result.Result
-			log.Printf("TaskHandler: результат для неактивной задачи #%d сохранен: %f", result.ID, result.Result)
-
-			// Получаем ID выражения, если оно есть
-			exprID, exprExists := taskToExpr[result.ID]
-			if exprExists {
-				log.Printf("TaskHandler: неактивная задача #%d принадлежит выражению %s, проверяем зависимости", result.ID, exprID)
-
-				// Обрабатываем зависимости даже для неактивной задачи
-				processTaskDependencies(result.ID, result.Result)
-
-				// Обновляем готовые задачи для выражения
-				updateReadyTasks()
-
-				// Проверяем статусы выражений
-				updateExpressions()
-			} else {
-				log.Printf("TaskHandler: для неактивной задачи #%d не найдено связанное выражение", result.ID)
-			}
-
-			w.WriteHeader(http.StatusOK)
-			return
+		if success {
+			log.Printf("TaskHandler POST: результат для задачи #%d успешно обработан", result.ID)
+		} else {
+			log.Printf("TaskHandler POST: ошибка обработки результата для задачи #%d", result.ID)
 		}
 
-		exprID := taskToExpr[result.ID]
-
-		log.Printf("TaskHandler: задача #%d (выражение %s): %s %s %s -> %f",
-			result.ID, exprID, task.Arg1, task.Operation, task.Arg2, result.Result)
-
-		// Сохраняем результат
-		results[result.ID] = result.Result
-
-		// Находим ID выражения для этой задачи
-		log.Printf("TaskHandler: задача #%d принадлежит выражению %s", result.ID, exprID)
-
-		// Удаляем выполненную задачу из активных
-		delete(tasks, result.ID)
-
-		// Обрабатываем зависимости - это ключевой метод
-		processTaskDependencies(result.ID, result.Result)
-
-		// Обновляем готовые задачи - новый метод для проверки задач в очереди готовых
-		updateReadyTasks()
-
-		// Проверяем, остались ли ещё задачи для этого выражения
-		tasksRemain := false
-		for taskID, id := range taskToExpr {
-			if id == exprID {
-				if _, ok := tasks[taskID]; ok {
-					tasksRemain = true
-					log.Printf("TaskHandler: для выражения %s осталась невыполненная задача #%d", exprID, taskID)
-					break
-				}
-			}
-		}
-
-		if !tasksRemain {
-			log.Printf("TaskHandler: для выражения %s не осталось задач, проверяем результат", exprID)
-		}
-
-		// Проверяем статусы выражений после обработки результата
-		updateExpressions()
-
-		log.Printf("TaskHandler: завершена обработка результата для задачи #%d: %f", result.ID, result.Result)
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -338,7 +256,7 @@ func processTaskDependencies(taskID int, taskResult float64) {
 		log.Printf("Задача #%d обновлена: %s %s %s", id, task.Arg1, task.Operation, task.Arg2)
 
 		// Проверяем, стала ли задача готовой к выполнению
-		if isTaskReady(task) {
+		if apiIsTaskReady(task) {
 			log.Printf("Задача #%d теперь готова к выполнению", id)
 
 			// Проверяем, нет ли этой задачи уже в очереди готовых
@@ -372,13 +290,13 @@ func processTaskDependencies(taskID int, taskResult float64) {
 }
 
 // Проверяет, находится ли задача в готовом для выполнения состоянии
-func isTaskReady(t models.Task) bool {
+func apiIsTaskReady(t models.Task) bool {
 	// Проверяем первый аргумент
 	log.Printf("Проверка готовности задачи #%d: arg1='%s', arg2='%s'", t.ID, t.Arg1, t.Arg2)
 
 	// Проверяем, содержат ли аргументы ссылки на результаты других задач
-	arg1HasResult := strings.HasPrefix(t.Arg1, "result")
-	arg2HasResult := strings.HasPrefix(t.Arg2, "result")
+	arg1HasResult := IsResultRef(t.Arg1)
+	arg2HasResult := IsResultRef(t.Arg2)
 
 	if arg1HasResult {
 		log.Printf("Задача #%d не готова: arg1='%s' ссылается на результат другой задачи", t.ID, t.Arg1)
@@ -427,124 +345,14 @@ func isTaskInQueue(task models.Task, queue []models.Task) bool {
 	return false
 }
 
-func updateExpressions() {
-	log.Println("updateExpressions: проверка статусов выражений")
-
-	// Итерируем по всем выражениям
-	for exprID, expr := range expressions {
-		// Пропускаем уже выполненные выражения
-		if expr.Status == "completed" {
-			log.Printf("updateExpressions: выражение %s уже выполнено, пропускаем", exprID)
-			continue
-		}
-
-		log.Printf("updateExpressions: проверка выражения %s (статус %s)", exprID, expr.Status)
-
-		// Собираем все задачи для этого выражения
-		exprTaskIDs := []int{}
-		for taskID, id := range taskToExpr {
-			if id == exprID {
-				exprTaskIDs = append(exprTaskIDs, taskID)
-			}
-		}
-		log.Printf("updateExpressions: для выражения %s найдено %d связанных задач", exprID, len(exprTaskIDs))
-
-		// Если для выражения не найдено задач, возможно парсинг не прошел
-		if len(exprTaskIDs) == 0 {
-			log.Printf("updateExpressions: для выражения %s не найдено задач, возможно проблема с парсингом", exprID)
-			continue
-		}
-
-		// Список всех активных задач
-		activeTaskIDs := []int{}
-		// Список задач в обработке
-		processingTaskIDs := []int{}
-		// Список задач с результатами
-		completedTaskIDs := []int{}
-
-		// Проверяем статус всех связанных задач
-		for _, taskID := range exprTaskIDs {
-			// Проверяем, существует ли задача в списке активных
-			if _, exists := tasks[taskID]; exists {
-				activeTaskIDs = append(activeTaskIDs, taskID)
-				log.Printf("updateExpressions: выражение %s - задача #%d в списке активных", exprID, taskID)
-			}
-
-			// Проверяем, находится ли задача в процессе выполнения
-			if processingTasks[taskID] {
-				processingTaskIDs = append(processingTaskIDs, taskID)
-				log.Printf("updateExpressions: выражение %s - задача #%d в процессе выполнения", exprID, taskID)
-			}
-
-			// Проверяем, имеет ли задача сохраненный результат
-			if _, hasResult := results[taskID]; hasResult {
-				completedTaskIDs = append(completedTaskIDs, taskID)
-				log.Printf("updateExpressions: выражение %s - задача #%d имеет сохраненный результат", exprID, taskID)
-			}
-		}
-
-		log.Printf("updateExpressions: выражение %s - статистика: %d активных, %d в обработке, %d выполнено",
-			exprID, len(activeTaskIDs), len(processingTaskIDs), len(completedTaskIDs))
-
-		// Проверяем, есть ли задачи в очереди готовых задач
-		readyTasksCount := 0
-		for _, task := range readyTasks {
-			if taskToExpr[task.ID] == exprID {
-				readyTasksCount++
-				log.Printf("updateExpressions: выражение %s - задача #%d находится в очереди готовых задач",
-					exprID, task.ID)
-			}
-		}
-
-		log.Printf("updateExpressions: выражение %s имеет %d задач в очереди готовых", exprID, readyTasksCount)
-
-		// Если нет активных задач, нет задач в обработке, нет задач в очереди готовых,
-		// но есть выполненные задачи, то выражение завершено
-		if len(activeTaskIDs) == 0 && len(processingTaskIDs) == 0 && readyTasksCount == 0 && len(completedTaskIDs) > 0 {
-			log.Printf("updateExpressions: для выражения %s нет активных задач и задач в обработке, есть выполненные задачи",
-				exprID)
-
-			// Находим задачу с самым высоким ID - это должна быть последняя операция в выражении
-			var lastTaskID int
-			for _, taskID := range completedTaskIDs {
-				if taskID > lastTaskID {
-					lastTaskID = taskID
-				}
-			}
-
-			log.Printf("updateExpressions: задача с самым высоким ID для выражения %s - #%d", exprID, lastTaskID)
-
-			// Получаем результат последней задачи
-			lastResult, hasResult := results[lastTaskID]
-			if hasResult {
-				log.Printf("updateExpressions: выражение %s завершено, результат %f от задачи #%d",
-					exprID, lastResult, lastTaskID)
-				expr.Status = "completed"
-				expr.Result = lastResult
-			} else {
-				log.Printf("updateExpressions: не найден результат для задачи #%d выражения %s", lastTaskID, exprID)
-
-				// Если не нашли результат последней задачи, ищем любой последний результат
-				if len(completedTaskIDs) > 0 {
-					// Берем последний добавленный результат
-					for _, taskID := range completedTaskIDs {
-						if res, ok := results[taskID]; ok {
-							log.Printf("updateExpressions: используем результат %f от задачи #%d для выражения %s",
-								res, taskID, exprID)
-							expr.Status = "completed"
-							expr.Result = res
-							break
-						}
-					}
-				}
-			}
-		}
-	}
+func apiUpdateExpressions() {
+	log.Println("apiUpdateExpressions: вызов UpdateExpressions из manager.go")
+	UpdateExpressions()
 }
 
 // Проверяет, находится ли задача в процессе обработки
-func isTaskProcessing(taskID int) bool {
-	return processingTasks[taskID]
+func apiIsTaskProcessing(taskID int) bool {
+	return IsTaskProcessing(taskID)
 }
 
 func processTask(taskId int, result float64) error {
@@ -572,7 +380,7 @@ func processTask(taskId int, result float64) error {
 	processTaskDependencies(taskId, result)
 
 	// Обновляем статусы всех выражений
-	updateExpressions()
+	UpdateExpressions()
 
 	return nil
 }
@@ -595,7 +403,7 @@ func updateReadyTasks() {
 		}
 
 		// Проверяем готовность задачи
-		if isTaskReady(task) {
+		if apiIsTaskReady(task) {
 			log.Printf("updateReadyTasks: задача #%d готова к выполнению", taskID)
 			readyTasks = append(readyTasks, task)
 		} else {
@@ -623,7 +431,7 @@ func updateReadyTasks() {
 			}
 
 			// Проверяем еще раз после обновления аргументов
-			if isTaskReady(task) {
+			if apiIsTaskReady(task) {
 				log.Printf("updateReadyTasks: задача #%d стала готова после обновления аргументов", taskID)
 				*taskPtr = task
 				readyTasks = append(readyTasks, task)

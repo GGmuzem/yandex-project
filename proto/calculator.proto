@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package calculator;
+
+option go_package = "github.com/GGmuzem/yandex-project/pkg/calculator";
+
+// Сервис вычислений
+service Calculator {
+  // Получение задачи от оркестратора
+  rpc GetTask(GetTaskRequest) returns (Task);
+  
+  // Отправка результата задачи в оркестратор
+  rpc SubmitResult(TaskResult) returns (SubmitResultResponse);
+}
+
+// Запрос на получение задачи
+message GetTaskRequest {
+  int32 agent_id = 1;
+}
+
+// Задача для вычисления
+message Task {
+  int32 id = 1;
+  string arg1 = 2;
+  string arg2 = 3;
+  string operation = 4;
+  int32 operation_time = 5;
+  string expression_id = 6;
+}
+
+// Результат выполнения задачи
+message TaskResult {
+  int32 id = 1;
+  double result = 2;
+  string expression_id = 3;
+}
+
+// Ответ на отправку результата
+message SubmitResultResponse {
+  bool success = 1;
+  string message = 2;
+} 

@@ -153,15 +153,35 @@ func workerLoop(id int) {
 
 // computeTask выполняет арифметическую операцию
 func computeTask(t models.Task) float64 {
-	a, errA := strconv.ParseFloat(t.Arg1, 64)
-	b, errB := strconv.ParseFloat(t.Arg2, 64)
-
-	// Если один из аргументов не является числом, проверяем, может быть это результат предыдущей операции
-	if errA != nil || errB != nil {
-		log.Printf("Предупреждение: аргументы не являются числами: %s, %s", t.Arg1, t.Arg2)
+	// Проверяем на пустые аргументы
+	if t.Arg1 == "" || t.Arg2 == "" {
+		log.Printf("Ошибка: пустые аргументы в задаче #%d: '%s', '%s'", t.ID, t.Arg1, t.Arg2)
 		return 0
 	}
 
+	log.Printf("Задача #%d: обработка аргументов: '%s' %s '%s'", t.ID, t.Arg1, t.Operation, t.Arg2)
+
+	// Проверка, является ли аргумент ссылкой на результат другой задачи
+	var a, b float64
+	var errA, errB error
+
+	// Обработка первого аргумента
+	a, errA = strconv.ParseFloat(t.Arg1, 64)
+	if errA != nil {
+		log.Printf("Невозможно преобразовать аргумент 1 '%s' в число для задачи #%d: %v", t.Arg1, t.ID, errA)
+		return 0
+	}
+
+	// Обработка второго аргумента
+	b, errB = strconv.ParseFloat(t.Arg2, 64)
+	if errB != nil {
+		log.Printf("Невозможно преобразовать аргумент 2 '%s' в число для задачи #%d: %v", t.Arg2, t.ID, errB)
+		return 0
+	}
+
+	log.Printf("Задача #%d: преобразованные аргументы: %f %s %f", t.ID, a, t.Operation, b)
+
+	// Выполняем операцию
 	switch t.Operation {
 	case "+":
 		return a + b
@@ -176,7 +196,7 @@ func computeTask(t models.Task) float64 {
 		}
 		return a / b
 	default:
-		log.Printf("Неизвестная операция: %s", t.Operation)
+		log.Printf("Неизвестная операция в задаче #%d: %s", t.ID, t.Operation)
 	}
 	return 0
 }

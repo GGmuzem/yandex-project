@@ -1,0 +1,41 @@
+{{define "title"}}Главная - Распределенный калькулятор{{end}}
+
+{{define "content"}}
+<div class="jumbotron">
+    <h1>Добро пожаловать в Распределенный калькулятор</h1>
+    <p class="lead">Наш сервис позволяет выполнять сложные вычисления, распределяя их между агентами.</p>
+    <hr class="my-4">
+    <p>Для начала работы зарегистрируйтесь или войдите в систему.</p>
+    <div class="d-flex gap-2">
+        <a class="btn btn-primary btn-lg" href="/register" role="button">Регистрация</a>
+        <a class="btn btn-success btn-lg" href="/login" role="button">Вход</a>
+    </div>
+</div>
+
+<div class="row mt-5">
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Распределенные вычисления</h5>
+                <p class="card-text">Система распределяет задачи между множеством агентов, ускоряя вычисления.</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Многопользовательский режим</h5>
+                <p class="card-text">Каждый пользователь может создавать свои выражения и отслеживать их вычисление.</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Высокая надежность</h5>
+                <p class="card-text">Система спроектирована с учетом отказоустойчивости и сохраняет все результаты.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{{end}} 
