@@ -3,6 +3,7 @@ package auth
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -120,23 +121,33 @@ func RegisterUser(db database.Database, req *models.RegisterRequest) error {
 
 // LoginUser аутентифицирует пользователя и возвращает JWT токен
 func LoginUser(db database.Database, req *models.LoginRequest) (string, error) {
+	log.Printf("LoginUser: Попытка входа пользователя %s", req.Login)
+
 	// Получаем пользователя по логину
 	user, err := db.GetUserByLogin(req.Login)
 	if err != nil {
+		log.Printf("LoginUser: Пользователь %s не найден: %v", req.Login, err)
 		return "", ErrInvalidCredentials
 	}
+	log.Printf("LoginUser: Пользователь %s найден в базе", req.Login)
 
 	// Проверяем пароль
+	log.Printf("LoginUser: Проверка пароля для пользователя %s", req.Login)
 	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password))
 	if err != nil {
+		log.Printf("LoginUser: Неверный пароль для пользователя %s: %v", req.Login, err)
 		return "", ErrInvalidCredentials
 	}
+	log.Printf("LoginUser: Пароль проверен успешно для пользователя %s", req.Login)
 
 	// Генерируем токен
+	log.Printf("LoginUser: Генерация JWT токена для пользователя %s", req.Login)
 	token, err := GenerateToken(user)
 	if err != nil {
+		log.Printf("LoginUser: Ошибка генерации токена для пользователя %s: %v", req.Login, err)
 		return "", err
 	}
+	log.Printf("LoginUser: JWT токен успешно создан для пользователя %s", req.Login)
 
 	return token, nil
 }

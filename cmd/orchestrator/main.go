@@ -76,7 +76,7 @@ func main() {
 	webHandler.SetupWebRoutes()
 
 	// Создаем базу данных
-	dbPath := "./data.sqlite"
+	dbPath := "./data/calculator.db"
 	db, err := database.New(dbPath)
 	if err != nil {
 		log.Fatalf("Ошибка создания базы данных: %v", err)

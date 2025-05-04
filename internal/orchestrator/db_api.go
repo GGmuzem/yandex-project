@@ -34,11 +34,11 @@ func (o *DBOrchestrator) LoadExpressionsFromDB() error {
 	//     return err
 	// }
 	//
-	// mu.Lock()
-	// defer mu.Unlock()
+	// Manager.mu.Lock()
+	// defer Manager.mu.Unlock()
 	//
 	// for _, expr := range exprList {
-	//     expressions[expr.ID] = expr
+	//     Manager.Expressions[expr.ID] = expr
 	// }
 
 	return nil
@@ -51,11 +51,11 @@ func (o *DBOrchestrator) LoadResultsFromDB(exprID string) error {
 		return err
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
+	Manager.mu.Lock()
+	defer Manager.mu.Unlock()
 
 	for taskID, result := range resultsMap {
-		results[taskID] = result
+		Manager.Results[taskID] = result
 	}
 
 	return nil
@@ -72,15 +72,15 @@ func (o *DBOrchestrator) UpdateExpressionsStatusInDB() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		mu.Lock()
+		Manager.mu.Lock()
 		log.Println("Обновление статусов выражений в БД...")
 
-		for id, expr := range expressions {
+		for id, expr := range Manager.Expressions {
 			if err := o.DB.UpdateExpressionStatus(id, expr.Status, expr.Result); err != nil {
 				log.Printf("Ошибка обновления статуса выражения %s в БД: %v", id, err)
 			}
 		}
 
-		mu.Unlock()
+		Manager.mu.Unlock()
 	}
 }

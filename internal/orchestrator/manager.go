@@ -243,15 +243,53 @@ func (tm *TaskManager) GetTask() (models.Task, bool) {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 
+	// Проверяем и обновляем готовые задачи
+	log.Printf("GetTask: Проверка готовых задач, текущее количество: %d", len(tm.ReadyTasks))
+
+	// Проходим по всем задачам и проверяем их готовность
+	log.Printf("GetTask: Всего задач в системе: %d", len(tm.Tasks))
+	for taskID, taskPtr := range tm.Tasks {
+		log.Printf("GetTask: Проверка задачи #%d", taskID)
+		if !tm.ProcessingTasks[taskID] { // Пропускаем задачи, которые уже в обработке
+			log.Printf("GetTask: Задача #%d не в обработке, проверяем готовность", taskID)
+			task := *taskPtr
+			if isTaskReady(task) {
+				log.Printf("GetTask: Задача #%d готова к выполнению", taskID)
+				// Проверяем, не находится ли задача уже в очереди
+				var found bool
+				for _, readyTask := range tm.ReadyTasks {
+					if readyTask.ID == task.ID {
+						found = true
+						log.Printf("GetTask: Задача #%d уже в очереди готовых", taskID)
+						break
+					}
+				}
+				if !found {
+					log.Printf("GetTask: Добавляем готовую задачу #%d в очередь", task.ID)
+					tm.ReadyTasks = append(tm.ReadyTasks, task)
+				}
+			} else {
+				log.Printf("GetTask: Задача #%d не готова к выполнению", taskID)
+			}
+		} else {
+			log.Printf("GetTask: Задача #%d уже в обработке, пропускаем", taskID)
+		}
+	}
+
+	// Если после обновления очередь всё ещё пуста, возвращаем ошибку
 	if len(tm.ReadyTasks) == 0 {
+		log.Printf("GetTask: Нет готовых задач")
 		return models.Task{}, false
 	}
+
+	// Берём первую готовую задачу
 	task := tm.ReadyTasks[0]
 	tm.ReadyTasks = tm.ReadyTasks[1:]
 
 	// Отмечаем задачу как обрабатываемую
 	tm.ProcessingTasks[task.ID] = true
 
+	log.Printf("GetTask: Возвращаем задачу #%d для выполнения", task.ID)
 	return task, true
 }
 
@@ -285,21 +323,38 @@ func (tm *TaskManager) AddResult(result models.TaskResult) bool {
 		task := *taskPtr
 
 		// Если задача имеет аргумент, который является результатом текущей задачи
-		if task.Arg1 == resultStr || task.Arg2 == resultStr {
+		if task.Arg1 == resultStr {
 			dependentTasksCount++
 			log.Printf("TaskManager.AddResult: Задача #%d зависит от результата задачи #%d", taskID, result.ID)
 
 			// Заменяем ссылку на результат на фактическое значение
-			if task.Arg1 == resultStr {
-				log.Printf("TaskManager.AddResult: Обновление задачи #%d: arg1 изменен с %s на %f",
-					taskID, task.Arg1, result.Result)
-				task.Arg1 = strconv.FormatFloat(result.Result, 'f', -1, 64)
+			log.Printf("TaskManager.AddResult: Обновление задачи #%d: arg1 изменен с %s на %f",
+				taskID, task.Arg1, result.Result)
+			task.Arg1 = strconv.FormatFloat(result.Result, 'f', -1, 64)
+
+			// Обновляем задачу
+			*taskPtr = task
+			log.Printf("TaskManager.AddResult: Задача #%d обновлена: %s %s %s",
+				taskID, task.Arg1, task.Operation, task.Arg2)
+
+			// Если теперь задача готова к выполнению, добавляем её в список готовых задач
+			log.Printf("TaskManager.AddResult: Проверка готовности задачи #%d после обновления аргументов", taskID)
+			if isTaskReady(task) {
+				log.Printf("TaskManager.AddResult: Задача #%d теперь готова к выполнению", taskID)
+				tm.ReadyTasks = append(tm.ReadyTasks, task)
+				log.Printf("TaskManager.AddResult: Задача #%d добавлена в очередь готовых задач", taskID)
+			} else {
+				log.Printf("TaskManager.AddResult: Задача #%d не готова к выполнению после обновления аргументов", taskID)
 			}
-			if task.Arg2 == resultStr {
-				log.Printf("TaskManager.AddResult: Обновление задачи #%d: arg2 изменен с %s на %f",
-					taskID, task.Arg2, result.Result)
-				task.Arg2 = strconv.FormatFloat(result.Result, 'f', -1, 64)
-			}
+		}
+		if task.Arg2 == resultStr {
+			dependentTasksCount++
+			log.Printf("TaskManager.AddResult: Задача #%d зависит от результата задачи #%d", taskID, result.ID)
+
+			// Заменяем ссылку на результат на фактическое значение
+			log.Printf("TaskManager.AddResult: Обновление задачи #%d: arg2 изменен с %s на %f",
+				taskID, task.Arg2, result.Result)
+			task.Arg2 = strconv.FormatFloat(result.Result, 'f', -1, 64)
 
 			// Обновляем задачу
 			*taskPtr = task
@@ -324,10 +379,22 @@ func (tm *TaskManager) AddResult(result models.TaskResult) bool {
 	// Удаляем задачу из списка обрабатываемых
 	delete(tm.ProcessingTasks, result.ID)
 
-	// Проверяем выражения
-	globalMutex.Lock()
-	defer globalMutex.Unlock()
-	UpdateExpressions()
+	// Обновляем статусы выражений
+	log.Printf("TaskManager.AddResult: Обновляем статусы выражений")
+	for _, expr := range tm.Expressions {
+		// Проверяем все задачи выражения
+		allCompleted := true
+		for taskID := range tm.Tasks {
+			if tm.TaskToExpr[taskID] == expr.ID {
+				allCompleted = false
+				break
+			}
+		}
+		if allCompleted {
+			expr.Status = "completed"
+			log.Printf("TaskManager.AddResult: Выражение %s завершено", expr.ID)
+		}
+	}
 
 	log.Printf("TaskManager.AddResult: Найдено %d зависимых задач от результата задачи #%d",
 		dependentTasksCount, result.ID)
@@ -380,72 +447,45 @@ func isResultRef(arg string) bool {
 	return strings.HasPrefix(arg, "result")
 }
 
-// IsTaskReady проверяет, готова ли задача к выполнению
+// isTaskReady проверяет, готова ли задача к выполнению:
 func isTaskReady(task models.Task) bool {
-	// Проверяем аргументы - если это ссылки на результаты других задач,
-	// то проверяем, посчитаны ли эти результаты
-
-	// Проверяем, не пустые ли аргументы
-	if task.Arg1 == "" || task.Arg2 == "" {
-		log.Printf("Задача #%d не готова: один или оба аргумента пустые", task.ID)
-		return false
-	}
-
-	// Проверяем, содержат ли аргументы ссылки на результаты других задач
-	arg1HasResult := isResultRef(task.Arg1)
-	arg2HasResult := isResultRef(task.Arg2)
-
-	// Если аргументы не содержат ссылок на результаты, то задача готова только если оба аргумента - числа
-	if !arg1HasResult && !arg2HasResult {
-		_, err1 := strconv.ParseFloat(task.Arg1, 64)
-		_, err2 := strconv.ParseFloat(task.Arg2, 64)
-
-		if err1 != nil || err2 != nil {
-			log.Printf("Задача #%d не готова: аргументы не являются числами: %s, %s", task.ID, task.Arg1, task.Arg2)
-			return false
-		}
-
-		// Проверка на деление на ноль
-		if task.Operation == "/" {
-			arg2, _ := strconv.ParseFloat(task.Arg2, 64)
-			if arg2 == 0 {
-				log.Printf("Задача #%d не готова: попытка деления на ноль", task.ID)
-				return false
-			}
-		}
-
-		log.Printf("Задача #%d готова к выполнению (оба аргумента - числа)", task.ID)
-		return true
-	}
-
-	// Если есть аргументы, которые ссылаются на результаты других задач
-	if arg1HasResult {
-		resultID, err := strconv.Atoi(strings.TrimPrefix(task.Arg1, "result"))
+	// Проверяем первый аргумент
+	if strings.HasPrefix(task.Arg1, "result") {
+		id, err := strconv.Atoi(strings.TrimPrefix(task.Arg1, "result"))
 		if err != nil {
-			log.Printf("Ошибка конвертации ID результата: %s, %v", task.Arg1, err)
+			log.Printf("isTaskReady: неверный ID результата в Arg1 задачи #%d: %v", task.ID, err)
 			return false
 		}
-		_, exists := Manager.Results[resultID]
-		if !exists {
-			log.Printf("Задача #%d не готова: результат для %s не найден", task.ID, task.Arg1)
+		if _, exists := Manager.Results[id]; !exists {
+			return false
+		}
+	} else {
+		if _, err := strconv.ParseFloat(task.Arg1, 64); err != nil {
 			return false
 		}
 	}
-
-	if arg2HasResult {
-		resultID, err := strconv.Atoi(strings.TrimPrefix(task.Arg2, "result"))
+	// Проверяем второй аргумент
+	if strings.HasPrefix(task.Arg2, "result") {
+		id, err := strconv.Atoi(strings.TrimPrefix(task.Arg2, "result"))
 		if err != nil {
-			log.Printf("Ошибка конвертации ID результата: %s, %v", task.Arg2, err)
+			log.Printf("isTaskReady: неверный ID результата в Arg2 задачи #%d: %v", task.ID, err)
 			return false
 		}
-		_, exists := Manager.Results[resultID]
-		if !exists {
-			log.Printf("Задача #%d не готова: результат для %s не найден", task.ID, task.Arg2)
+		if _, exists := Manager.Results[id]; !exists {
+			return false
+		}
+	} else {
+		if _, err := strconv.ParseFloat(task.Arg2, 64); err != nil {
 			return false
 		}
 	}
-
-	log.Printf("Задача #%d готова к выполнению", task.ID)
+	// Проверка деления на ноль
+	if task.Operation == "/" {
+		val2, _ := strconv.ParseFloat(task.Arg2, 64)
+		if val2 == 0 {
+			return false
+		}
+	}
 	return true
 }
 

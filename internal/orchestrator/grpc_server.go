@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net"
 	"os"
@@ -74,93 +75,59 @@ func (s *CalculatorServer) GetTask(ctx context.Context, req *calculator.GetTaskR
 	Manager.mu.Lock()
 	defer Manager.mu.Unlock()
 
-	// Логируем состояние очереди готовых задач и всех задач
-	log.Printf("=== ОТЛАДКА SERVER: Всего задач в менеджере: %d", len(Manager.Tasks))
-	log.Printf("=== ОТЛАДКА SERVER: Длина очереди готовых задач: %d", len(Manager.ReadyTasks))
-
-	// Проверяем содержимое карты задач
-	for id, task := range Manager.Tasks {
-		log.Printf("=== ОТЛАДКА SERVER: В карте задач ID=%d: Arg1='%s', Arg2='%s', Operation='%s', ExpressionID='%s'",
-			id, task.Arg1, task.Arg2, task.Operation, task.ExpressionID)
-	}
-
-	// Проверяем очередь готовых задач
-	for i, task := range Manager.ReadyTasks {
-		log.Printf("=== ОТЛАДКА SERVER: Задача #%d в очереди: ID=%d, Arg1='%s', Arg2='%s', Operation='%s', ExpressionID='%s'",
-			i, task.ID, task.Arg1, task.Arg2, task.Operation, task.ExpressionID)
-	}
-
-	// Проверяем задачи в обработке
-	log.Printf("=== ОТЛАДКА SERVER: Задачи в обработке:")
-	for taskID, agentID := range Manager.ProcessingTasks {
-		log.Printf("=== ОТЛАДКА SERVER: Задача #%d обрабатывается агентом: %v", taskID, agentID)
-	}
-
-	// Если нет готовых задач, возвращаем пустую задачу
-	if len(Manager.ReadyTasks) == 0 {
-		log.Printf("=== ОТЛАДКА SERVER: Нет готовых задач для агента ID=%d", req.AgentID)
-		return &calculator.Task{}, nil
-	}
-
-	// Проверим, есть ли задачи в состоянии готовности
-	readyTaskIndex := -1
-	for i, task := range Manager.ReadyTasks {
-		processingStatus, isProcessing := Manager.ProcessingTasks[task.ID]
-		log.Printf("=== ОТЛАДКА SERVER: Проверка задачи #%d: в обработке=%v, статус=%v",
-			task.ID, isProcessing, processingStatus)
-
-		if task.ID > 0 && !isProcessing {
-			readyTaskIndex = i
-			log.Printf("=== ОТЛАДКА SERVER: Найдена готовая задача #%d: %s %s %s",
-				task.ID, task.Arg1, task.Operation, task.Arg2)
-			break
+	// Обновляем очередь готовых задач
+	log.Printf("=== ОТЛАДКА SERVER: Проверка и обновление готовых задач")
+	for taskID, taskPtr := range Manager.Tasks {
+		if !Manager.ProcessingTasks[taskID] {
+			task := *taskPtr
+			if isTaskReady(task) {
+				// Проверяем, что задача ещё не в очереди
+				var found bool
+				for _, rt := range Manager.ReadyTasks {
+					if rt.ID == task.ID {
+						found = true
+						break
+					}
+				}
+				if !found {
+					log.Printf("=== ОТЛАДКА SERVER: Добавляем задачу #%d в очередь", task.ID)
+					Manager.ReadyTasks = append(Manager.ReadyTasks, task)
+				}
+			}
 		}
 	}
 
-	// Если нет готовых задач, возвращаем пустую задачу
-	if readyTaskIndex == -1 {
-		log.Printf("=== ОТЛАДКА SERVER: Все задачи уже в обработке для агента ID=%d", req.AgentID)
-		return &calculator.Task{}, nil
+	log.Printf("=== ОТЛАДКА SERVER: Длина очереди готовых задач: %d", len(Manager.ReadyTasks))
+
+	// Если нет готовых задач, возвращаем ошибку
+	if len(Manager.ReadyTasks) == 0 {
+		log.Printf("=== ОТЛАДКА SERVER: Нет готовых задач для агента #%d", req.AgentID)
+		return nil, fmt.Errorf("нет доступных задач")
 	}
 
-	// Получаем первую задачу из очереди и удаляем ее из очереди
-	task := Manager.ReadyTasks[readyTaskIndex]
-
-	// Если задача не в начале очереди, меняем порядок и усекаем очередь
-	if readyTaskIndex < len(Manager.ReadyTasks)-1 {
-		// Перемещаем элемент на последнее место и удаляем
-		Manager.ReadyTasks[readyTaskIndex] = Manager.ReadyTasks[len(Manager.ReadyTasks)-1]
-	}
-	Manager.ReadyTasks = Manager.ReadyTasks[:len(Manager.ReadyTasks)-1]
-
-	log.Printf("=== ОТЛАДКА SERVER: Взята задача ID=%d из очереди (индекс %d), осталось задач: %d",
-		task.ID, readyTaskIndex, len(Manager.ReadyTasks))
-
-	// Отмечаем задачу как обрабатываемую
+	// Выбираем первую задачу из очереди
+	task := Manager.ReadyTasks[0]
+	// Удаляем её из очереди
+	Manager.ReadyTasks = Manager.ReadyTasks[1:]
+	// Помечаем как обрабатываемую
 	Manager.ProcessingTasks[task.ID] = true
-	log.Printf("=== ОТЛАДКА SERVER: Задача ID=%d помечена как обрабатываемая агентом ID=%d", task.ID, req.AgentID)
 
-	// Сохраняем задачу в карту задач, если она еще не там
-	if _, exists := Manager.Tasks[task.ID]; !exists {
-		log.Printf("=== ОТЛАДКА SERVER: Задача ID=%d не найдена в карте задач, добавляем", task.ID)
-		taskCopy := task
-		Manager.Tasks[task.ID] = &taskCopy
-	}
+	log.Printf("=== ОТЛАДКА SERVER: Возвращаем задачу #%d агенту #%d", task.ID, req.AgentID)
 
-	// Преобразуем задачу в protobuf-формат
-	taskProto := &calculator.Task{
+	// Преобразуем в protobuf формат
+	grpcTask := &calculator.Task{
 		ID:            int32(task.ID),
 		Arg1:          task.Arg1,
 		Arg2:          task.Arg2,
 		Operation:     task.Operation,
-		ExpressionID:  task.ExpressionID,
 		OperationTime: int32(task.OperationTime),
+		ExpressionID:  task.ExpressionID,
 	}
 
-	log.Printf("=== ОТЛАДКА SERVER: Отправка задачи агенту: ID=%d, Arg1='%s', Arg2='%s', Operation='%s', ExpressionID='%s'",
-		taskProto.ID, taskProto.Arg1, taskProto.Arg2, taskProto.Operation, taskProto.ExpressionID)
+	log.Printf("=== ОТЛАДКА SERVER: Возвращаем задачу агенту #%d: ID=%d, %s %s %s", 
+		req.AgentID, grpcTask.ID, grpcTask.Arg1, grpcTask.Operation, grpcTask.Arg2)
 
-	return taskProto, nil
+	return grpcTask, nil
 }
 
 // SubmitResult обрабатывает результат задачи от агента

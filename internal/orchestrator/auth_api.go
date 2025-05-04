@@ -28,7 +28,9 @@ func NewAuthHandlers(db database.Database) *AuthHandlers {
 func (h *AuthHandlers) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		log.Printf("RegisterHandler: Неверный метод: %s", r.Method)
-		http.Error(w, "Метод не разрешен", http.StatusMethodNotAllowed)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
 		return
 	}
 
@@ -40,7 +42,9 @@ func (h *AuthHandlers) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		log.Printf("RegisterHandler: Ошибка чтения тела запроса: %v", err)
-		http.Error(w, "Invalid request data", http.StatusUnprocessableEntity)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request data"})
 		return
 	}
 	defer r.Body.Close()
@@ -50,7 +54,9 @@ func (h *AuthHandlers) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	// Если тело пустое, возвращаем ошибку
 	if len(body) == 0 {
 		log.Printf("RegisterHandler: Пустое тело запроса")
-		http.Error(w, "Invalid request data", http.StatusUnprocessableEntity)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request data"})
 		return
 	}
 
@@ -59,7 +65,9 @@ func (h *AuthHandlers) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	err = json.Unmarshal(body, &req)
 	if err != nil {
 		log.Printf("RegisterHandler: Ошибка декодирования JSON: %v", err)
-		http.Error(w, "Invalid request data", http.StatusUnprocessableEntity)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request data"})
 		return
 	}
 
@@ -68,7 +76,9 @@ func (h *AuthHandlers) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	// Проверка наличия логина и пароля
 	if req.Login == "" || req.Password == "" {
 		log.Printf("RegisterHandler: Логин или пароль отсутствуют")
-		http.Error(w, "Login and password are required", http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Login and password are required"})
 		return
 	}
 
@@ -76,30 +86,38 @@ func (h *AuthHandlers) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	err = auth.RegisterUser(h.DB, &req)
 	if err != nil {
 		log.Printf("RegisterHandler: Ошибка при регистрации пользователя: %v", err)
+		w.Header().Set("Content-Type", "application/json")
 		if err == auth.ErrUserExists {
-			http.Error(w, "User already exists", http.StatusConflict)
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]string{"error": "User already exists"})
 		} else {
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Internal server error"})
 		}
 		return
 	}
 
 	// Успешная регистрация
 	log.Printf("RegisterHandler: Пользователь %s успешно зарегистрирован", req.Login)
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte("User registered successfully"))
+	json.NewEncoder(w).Encode(map[string]string{"message": "User registered successfully"})
 }
 
 // LoginHandler обработчик входа пользователя
 func (h *AuthHandlers) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
 		return
 	}
 
 	var req models.LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request data", http.StatusUnprocessableEntity)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request data"})
 		return
 	}
 
@@ -112,11 +130,14 @@ func (h *AuthHandlers) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	// Аутентифицируем пользователя
 	token, err := auth.LoginUser(h.DB, &req)
 	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
 		if err == auth.ErrInvalidCredentials {
-			http.Error(w, "Invalid login or password", http.StatusUnauthorized)
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid login or password"})
 		} else {
 			log.Printf("Error authenticating user: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "Internal server error"})
 		}
 		return
 	}
@@ -136,12 +157,16 @@ func (h *AuthHandlers) CalculateWithAuthHandler(w http.ResponseWriter, r *http.R
 	// Получаем пользователя из контекста (установлен middleware)
 	user, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Unauthorized"})
 		return
 	}
 
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
 		return
 	}
 
@@ -167,7 +192,9 @@ func (h *AuthHandlers) CalculateWithAuthHandler(w http.ResponseWriter, r *http.R
 	// Сохраняем выражение в БД
 	if err := h.DB.SaveExpression(expr); err != nil {
 		log.Printf("Error saving expression: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Internal server error"})
 		return
 	}
 
@@ -206,12 +233,16 @@ func (h *AuthHandlers) ListExpressionsWithAuthHandler(w http.ResponseWriter, r *
 	// Получаем пользователя из контекста
 	user, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Unauthorized"})
 		return
 	}
 
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
 		return
 	}
 
@@ -219,7 +250,9 @@ func (h *AuthHandlers) ListExpressionsWithAuthHandler(w http.ResponseWriter, r *
 	exprList, err := h.DB.GetExpressions(user.ID)
 	if err != nil {
 		log.Printf("Error getting expressions: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Internal server error"})
 		return
 	}
 
@@ -239,26 +272,34 @@ func (h *AuthHandlers) GetExpressionWithAuthHandler(w http.ResponseWriter, r *ht
 	// Получаем пользователя из контекста
 	user, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Unauthorized"})
 		return
 	}
 
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
 		return
 	}
 
 	// Получаем ID выражения из URL
 	id := getExpressionIDFromURL(r.URL.Path)
 	if id == "" {
-		http.Error(w, "Invalid expression ID", http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid expression ID"})
 		return
 	}
 
 	// Получаем выражение из БД
 	expr, err := h.DB.GetExpression(id, user.ID)
 	if err != nil {
-		http.Error(w, "Expression not found", http.StatusNotFound)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Expression not found"})
 		return
 	}
 

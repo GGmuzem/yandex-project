@@ -11,7 +11,7 @@ require (
 
 require (
 	github.com/golang/protobuf v1.5.3 // indirect
-	github.com/joho/godotenv v1.5.1 // indirect
+	github.com/joho/godotenv v1.5.1
 	golang.org/x/net v0.19.0 // indirect
 	golang.org/x/sys v0.31.0 // indirect
 	golang.org/x/text v0.14.0 // indirect

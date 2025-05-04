@@ -64,7 +64,7 @@ func (gc *GRPCClient) GetTask() (models.Task, error) {
 	// Улучшенная проверка на пустой ответ от сервера - проверка всех полей
 	if resp.ID == 0 && resp.Arg1 == "" && resp.Arg2 == "" && resp.Operation == "" {
 		log.Printf("Агент #%d: Получен пустой ответ от сервера (нет задач), запрошу задачу позже", gc.agentID)
-		return models.Task{}, fmt.Errorf("пустой ответ от сервера")
+		return models.Task{}, nil
 	}
 
 	// Дополнительная проверка на валидность задачи

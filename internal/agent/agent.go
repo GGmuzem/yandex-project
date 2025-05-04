@@ -178,10 +178,17 @@ func (a *Agent) StartProcessing() {
 			continue
 		}
 
-		// Пропускаем пустые задачи
-		if (task == models.Task{}) {
-			log.Printf("Воркер gRPC %d: Задач нет, ожидание", a.grpcClient.agentID)
-			time.Sleep(5 * time.Second)
+		// Если произошла ошибка или нет задач, продолжаем опрашивать сервер
+		if err != nil {
+			log.Printf("Воркер gRPC %d: Ошибка получения задачи: %v", a.grpcClient.agentID, err)
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		// Проверяем, что задача не пустая
+		if task.ID == 0 && task.Operation == "" && task.Arg1 == "" && task.Arg2 == "" {
+			log.Printf("Воркер gRPC %d: Получена пустая задача, ожидание", a.grpcClient.agentID)
+			time.Sleep(1 * time.Second)
 			continue
 		}
 
