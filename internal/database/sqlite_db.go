@@ -6,8 +6,8 @@ import (
 	"log"
 	"time"
 
+	_ "modernc.org/sqlite"
 	"github.com/GGmuzem/yandex-project/pkg/models"
-	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -18,7 +18,7 @@ type SQLiteDB struct {
 
 // New создаёт и инициализирует новый экземпляр SQLite БД
 func New(dbPath string) (*SQLiteDB, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("не удалось подключиться к базе данных: %w", err)
 	}
@@ -183,6 +183,19 @@ func (db *SQLiteDB) UpdateExpressionStatus(id string, status string, result floa
 		log.Printf("=== ОТЛАДКА SQLiteDB.UpdateExpressionStatus: Текущее значение в БД: статус %s, результат %f", currentStatus, currentResultValue)
 	}
 	
+	// Проверяем, существует ли выражение
+	var exists bool
+	err = db.db.QueryRow("SELECT EXISTS(SELECT 1 FROM expressions WHERE id = ?)", id).Scan(&exists)
+	if err != nil {
+		log.Printf("=== ОТЛАДКА SQLiteDB.UpdateExpressionStatus: Ошибка при проверке существования выражения: %v", err)
+		return err
+	}
+	
+	if !exists {
+		log.Printf("=== ОТЛАДКА SQLiteDB.UpdateExpressionStatus: Выражение %s не найдено в БД", id)
+		return fmt.Errorf("выражение %s не найдено", id)
+	}
+	
 	// Выполняем обновление
 	res, err := db.db.Exec(
 		"UPDATE expressions SET status = ?, result = ? WHERE id = ?",
@@ -271,9 +284,67 @@ func (db *SQLiteDB) GetExpressions(userID int) ([]*models.Expression, error) {
 	return expressions, nil
 }
 
-// SaveResult теперь ничего не делает. Результаты сохраняются в таблице expressions.
+// SaveResult сохраняет результат задачи и обновляет статус выражения, если все задачи завершены
 func (db *SQLiteDB) SaveResult(taskID int, result float64, exprID string) error {
-	log.Printf("=== ОТЛАДКА SQLiteDB.SaveResult: Задача #%d, результат %f, выражение %s - ничего не делаю", taskID, result, exprID)
+	log.Printf("=== ОТЛАДКА SQLiteDB.SaveResult: Задача #%d, результат %f, выражение %s - сохраняем результат", taskID, result, exprID)
+	
+	// Сохраняем результат задачи в таблицу task_results
+	_, err := db.db.Exec(
+		"INSERT OR REPLACE INTO task_results (task_id, result, expression_id) VALUES (?, ?, ?)",
+		taskID, result, exprID,
+	)
+	if err != nil {
+		log.Printf("=== ОТЛАДКА SQLiteDB.SaveResult: Ошибка при сохранении результата в таблицу task_results: %v", err)
+		return err
+	}
+	log.Printf("=== ОТЛАДКА SQLiteDB.SaveResult: Результат задачи #%d сохранен в таблицу task_results", taskID)
+	
+	// Удаляем задачу из таблицы tasks, так как она уже выполнена
+	_, err = db.db.Exec("DELETE FROM tasks WHERE id = ?", taskID)
+	if err != nil {
+		log.Printf("=== ОТЛАДКА SQLiteDB.SaveResult: Ошибка при удалении задачи из таблицы tasks: %v", err)
+		// Не возвращаем ошибку, так как результат уже сохранен
+	} else {
+		log.Printf("=== ОТЛАДКА SQLiteDB.SaveResult: Задача #%d удалена из таблицы tasks", taskID)
+	}
+	
+	// Проверяем, остались ли задачи для этого выражения
+	var count int
+	err = db.db.QueryRow("SELECT COUNT(*) FROM tasks WHERE expression_id = ?", exprID).Scan(&count)
+	if err != nil {
+		log.Printf("=== ОТЛАДКА SQLiteDB.SaveResult: Ошибка при проверке оставшихся задач: %v", err)
+		return err
+	}
+	
+	log.Printf("=== ОТЛАДКА SQLiteDB.SaveResult: Для выражения %s осталось %d невыполненных задач", exprID, count)
+	
+	// Если задач больше нет, обновляем результат выражения
+	if count == 0 {
+		// Получаем последний результат для выражения
+		var finalResult float64
+		row := db.db.QueryRow(
+			"SELECT result FROM task_results WHERE expression_id = ? ORDER BY task_id DESC LIMIT 1",
+			exprID,
+		)
+		err = row.Scan(&finalResult)
+		if err != nil {
+			log.Printf("=== ОТЛАДКА SQLiteDB.SaveResult: Ошибка при получении финального результата: %v", err)
+			// Используем текущий результат, если не можем получить последний
+			finalResult = result
+		}
+		
+		log.Printf("=== ОТЛАДКА SQLiteDB.SaveResult: Обновляем результат выражения %s на %f", exprID, finalResult)
+		
+		// Обновляем выражение в БД
+		if err := db.UpdateExpressionStatus(exprID, "completed", finalResult); err != nil {
+			log.Printf("=== ОТЛАДКА SQLiteDB.SaveResult: Ошибка при обновлении выражения: %v", err)
+			return err
+		}
+		log.Printf("=== ОТЛАДКА SQLiteDB.SaveResult: Успешно обновлен результат выражения %s на %f", exprID, finalResult)
+	} else {
+		log.Printf("=== ОТЛАДКА SQLiteDB.SaveResult: Для выражения %s остались невыполненные задачи, не обновляем результат", exprID)
+	}
+	
 	return nil
 }
 

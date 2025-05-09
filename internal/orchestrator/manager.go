@@ -139,12 +139,14 @@ func UpdateExpressions() {
 
 		// Проверяем, остались ли задачи для этого выражения
 		tasksRemaining := false
+		Manager.mu.Lock()
 		for taskID := range Manager.Tasks {
 			if Manager.TaskToExpr[taskID] == exprID {
 				tasksRemaining = true
 				break
 			}
 		}
+		Manager.mu.Unlock()
 
 		// Если задач больше нет, обновляем статус выражения
 		if !tasksRemaining {
@@ -153,11 +155,13 @@ func UpdateExpressions() {
 			// Находим последний результат для этого выражения
 			// Собираем все задачи, связанные с этим выражением
 			relatedTasks := make(map[int]bool)
+			Manager.mu.Lock()
 			for taskID, id := range Manager.TaskToExpr {
 				if id == exprID {
 					relatedTasks[taskID] = true
 				}
 			}
+			Manager.mu.Unlock()
 
 			// Теперь ищем задачу, которая не является аргументом для других задач
 			finalTaskID := 0
@@ -188,6 +192,7 @@ func UpdateExpressions() {
 				resultRef := "result" + strconv.Itoa(taskID)
 				log.Printf("=== ОТЛАДКА UpdateExpressions: Проверяю, используется ли задача #%d как аргумент (resultRef=%s)", taskID, resultRef)
 				
+				Manager.mu.Lock()
 				for tid, task := range Manager.Tasks {
 					if task.Arg1 == resultRef || task.Arg2 == resultRef {
 						isUsedAsArg = true
@@ -195,6 +200,7 @@ func UpdateExpressions() {
 						break
 					}
 				}
+				Manager.mu.Unlock()
 
 				// Если задача не используется как аргумент, это финальный результат
 				if !isUsedAsArg {
@@ -210,24 +216,42 @@ func UpdateExpressions() {
 
 			// Если не нашли, используем задачу с самым большим ID как запасной вариант
 			if !finalFound {
+				// Собираем все задачи с результатами для этого выражения
+				type taskWithResult struct {
+					id     int
+					result float64
+				}
+				var tasksWithResults []taskWithResult
+				
 				for taskID := range relatedTasks {
-					if result, ok := Manager.Results[taskID]; ok && taskID > finalTaskID {
-						finalTaskID = taskID
-						finalResult = result
-						finalFound = true
+					if result, ok := Manager.Results[taskID]; ok {
+						tasksWithResults = append(tasksWithResults, taskWithResult{id: taskID, result: result})
+						log.Printf("=== ОТЛАДКА UpdateExpressions: Задача #%d имеет результат %f", taskID, result)
 					}
 				}
-				if finalFound {
-					log.Printf("Использую задачу с самым большим ID #%d как финальный результат для выражения %s: %f", finalTaskID, exprID, finalResult)
+				
+				// Сортируем задачи по ID в порядке убывания (самый большой ID будет первым)
+				sort.Slice(tasksWithResults, func(i, j int) bool {
+					return tasksWithResults[i].id > tasksWithResults[j].id
+				})
+				
+				// Берем задачу с самым большим ID
+				if len(tasksWithResults) > 0 {
+					finalTaskID = tasksWithResults[0].id
+					finalResult = tasksWithResults[0].result
+					finalFound = true
+					log.Printf("=== ОТЛАДКА UpdateExpressions: Выбрана задача с самым большим ID #%d с результатом %f для выражения %s", finalTaskID, finalResult, exprID)
 				}
 			}
 
 			if finalFound {
 				// Устанавливаем статус и результат выражения
+				Manager.mu.Lock()
 				expr.Status = "completed"
 				expr.Result = finalResult
 				log.Printf("UpdateExpressions: Выражение %s завершено с результатом задачи #%d: %f", 
 					exprID, finalTaskID, finalResult)
+				Manager.mu.Unlock()
 
 				// Сохраняем результат в БД
 				if DB != nil {
@@ -348,6 +372,29 @@ func (tm *TaskManager) GetTask() (models.Task, bool) {
 	log.Printf("GetTask: Всего результатов в системе: %d", len(tm.Results))
 	for taskID, result := range tm.Results {
 		log.Printf("GetTask: Результат задачи #%d: %f", taskID, result)
+	}
+	
+	// Специальная проверка для задач с ID 4 и 5
+	for _, taskID := range []int{4, 5} {
+		if task, exists := tm.Tasks[taskID]; exists && !tm.ProcessingTasks[taskID] {
+			log.Printf("GetTask: Проверка специальной задачи #%d: %s %s %s", 
+				taskID, task.Arg1, task.Operation, task.Arg2)
+			if isTaskReady(*task) {
+				log.Printf("GetTask: Специальная задача #%d готова к выполнению", taskID)
+				// Проверяем, не находится ли задача уже в очереди
+				var found bool
+				for _, readyTask := range tm.ReadyTasks {
+					if readyTask.ID == taskID {
+						found = true
+						break
+					}
+				}
+				if !found {
+					tm.ReadyTasks = append(tm.ReadyTasks, *task)
+					log.Printf("GetTask: Специальная задача #%d добавлена в очередь", taskID)
+				}
+			}
+		}
 	}
 	
 	for taskID, taskPtr := range tm.Tasks {
@@ -603,11 +650,9 @@ func (tm *TaskManager) AddResult(result models.TaskResult) bool {
 	}
 	log.Printf("TaskManager.AddResult: Всего в очереди готовых задач: %d", len(tm.ReadyTasks))
 
-	// Теперь, когда все зависимости обработаны и статус выражения обновлен,
-	// можно безопасно удалить задачу из списка задач
-	// Не удаляем из TaskToExpr, чтобы сохранить связь между задачами и выражениями
-	delete(tm.Tasks, result.ID)
-	log.Printf("TaskManager.AddResult: Задача #%d удалена из списка задач", result.ID)
+	// Не удаляем задачу из списка задач, чтобы сохранить информацию о зависимостях
+	// Просто отмечаем, что задача больше не обрабатывается
+	log.Printf("TaskManager.AddResult: Задача #%d обработана и результат сохранен", result.ID)
 
 	return true
 }

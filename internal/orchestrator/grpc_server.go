@@ -2,13 +2,9 @@ package orchestrator
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net"
 	"os"
-	"sort"
-	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/GGmuzem/yandex-project/internal/database"
@@ -74,6 +70,9 @@ func StartGRPCServer(db database.Database, mutex, tasksMutex *sync.Mutex) error 
 func (s *CalculatorServer) GetTask(ctx context.Context, req *calculator.GetTaskRequest) (*calculator.Task, error) {
 	log.Printf("=== ОТЛАДКА SERVER: Получен запрос GetTask от агента ID=%d", req.AgentID)
 
+	// Добавляем дополнительное логирование для отладки
+	log.Printf("=== ОТЛАДКА SERVER: Перед блокировкой - длина очереди готовых задач: %d", len(Manager.ReadyTasks))
+
 	// Блокируем доступ к менеджеру задач
 	Manager.mu.Lock()
 	defer Manager.mu.Unlock()
@@ -101,18 +100,41 @@ func (s *CalculatorServer) GetTask(ctx context.Context, req *calculator.GetTaskR
 	}
 
 	log.Printf("=== ОТЛАДКА SERVER: Длина очереди готовых задач: %d", len(Manager.ReadyTasks))
+	
+	// Детальный вывод всех задач в очереди
+	for i, task := range Manager.ReadyTasks {
+		log.Printf("=== ОТЛАДКА SERVER: Готовая задача #%d в очереди (индекс %d): ID=%d, %s %s %s, ExprID=%s", 
+			task.ID, i, task.ID, task.Arg1, task.Operation, task.Arg2, task.ExpressionID)
+	}
+	
+	// Детальный вывод всех задач в системе
+	log.Printf("=== ОТЛАДКА SERVER: Всего задач в системе: %d", len(Manager.Tasks))
+	for taskID, taskPtr := range Manager.Tasks {
+		if taskPtr != nil {
+			task := *taskPtr
+			log.Printf("=== ОТЛАДКА SERVER: Задача #%d: %s %s %s, ExprID=%s, В обработке=%v", 
+				taskID, task.Arg1, task.Operation, task.Arg2, task.ExpressionID, Manager.ProcessingTasks[taskID])
+		}
+	}
 
-	// Если нет готовых задач, возвращаем ошибку
+	// Если нет готовых задач, возвращаем пустую задачу
 	if len(Manager.ReadyTasks) == 0 {
 		log.Printf("=== ОТЛАДКА SERVER: Нет готовых задач для агента #%d", req.AgentID)
-		return nil, fmt.Errorf("нет доступных задач")
+		return &calculator.Task{
+			ID:            0,
+			Arg1:          "",
+			Arg2:          "",
+			Operation:     "",
+			OperationTime: 0,
+			ExpressionID:  "",
+		}, nil
 	}
 
 	// Выбираем первую задачу из очереди
 	task := Manager.ReadyTasks[0]
 	// Удаляем её из очереди
 	Manager.ReadyTasks = Manager.ReadyTasks[1:]
-	// Помечаем как обрабатываемую
+	// Отмечаем задачу как обрабатываемую
 	Manager.ProcessingTasks[task.ID] = true
 
 	log.Printf("=== ОТЛАДКА SERVER: Возвращаем задачу #%d агенту #%d", task.ID, req.AgentID)
@@ -154,165 +176,18 @@ func (s *CalculatorServer) SubmitResult(ctx context.Context, result *calculator.
 		}, nil
 	}
 
-	// Проверяем, остались ли задачи для этого выражения
-	tasksRemain := false
-	Manager.mu.Lock()
-	for taskID, id := range Manager.TaskToExpr {
-		if id == exprID {
-			if _, ok := Manager.Tasks[taskID]; ok {
-				tasksRemain = true
-				log.Printf("Для выражения %s осталась невыполненная задача #%d", exprID, taskID)
-				break
-			}
-		}
+	// Сохраняем результат в БД
+	if err := s.DB.SaveResult(int(result.ID), result.Result, exprID); err != nil {
+		log.Printf("Ошибка при сохранении результата задачи #%d в БД: %v", result.ID, err)
+	} else {
+		log.Printf("Результат задачи #%d успешно сохранен в БД", result.ID)
 	}
-	Manager.mu.Unlock()
 
-	if !tasksRemain {
-		log.Printf("Для выражения %s не осталось задач, определяем финальный результат", exprID)
+	// Обновляем готовые задачи, которые зависят от этого результата
+	updateReadyTasks()
 
-		// Находим корневую задачу для этого выражения (результат которой не используется в других задачах)
-		var finalTaskID int
-		var finalResult float64
-		finalFound := false
-
-		// Собираем все задачи с результатами для этого выражения
-		type taskWithResult struct {
-			id     int
-			result float64
-		}
-		var tasksWithResults []taskWithResult
-
-		// Сначала собираем все задачи с их результатами
-		Manager.mu.Lock()
-		for taskID, id := range Manager.TaskToExpr {
-			if id != exprID {
-				continue
-			}
-
-			// Проверяем, есть ли результат для этой задачи
-			taskResult, resultExists := Manager.Results[taskID]
-			if !resultExists {
-				log.Printf("Задача #%d не имеет результата", taskID)
-				continue
-			}
-
-			// Добавляем задачу в список
-			tasksWithResults = append(tasksWithResults, taskWithResult{id: taskID, result: taskResult})
-			log.Printf("Задача #%d имеет результат %f", taskID, taskResult)
-		}
-		Manager.mu.Unlock()
-
-		// Выводим все задачи для отладки
-		log.Printf("Все задачи для выражения %s:", exprID)
-		for i, task := range tasksWithResults {
-			log.Printf("[%d] Задача #%d = %f", i, task.id, task.result)
-		}
-
-		// Сортируем задачи по ID в порядке убывания (самый большой ID будет первым)
-		sort.Slice(tasksWithResults, func(i, j int) bool {
-			return tasksWithResults[i].id > tasksWithResults[j].id
-		})
-
-		// Создаем множество задач, чьи результаты используются в других задачах
-		usedAsInput := make(map[int]bool)
-		
-		// Проходим по всем задачам и проверяем их аргументы
-		Manager.mu.Lock()
-		for taskID, expressionID := range Manager.TaskToExpr {
-			if expressionID != exprID {
-				continue
-			}
-			
-			task, exists := Manager.Tasks[taskID]
-			if !exists {
-				// Возможно задача уже выполнена и удалена, но нам все равно нужно проверить
-				// архивные данные о задачах
-				continue
-			}
-			
-			// Проверяем Arg1
-			if strings.HasPrefix(task.Arg1, "result") {
-				sourceTaskID, err := strconv.Atoi(strings.TrimPrefix(task.Arg1, "result"))
-				if err == nil {
-					usedAsInput[sourceTaskID] = true
-					log.Printf("  Задача #%d используется как входной аргумент в задаче #%d (Arg1)", sourceTaskID, taskID)
-				}
-			}
-			
-			// Проверяем Arg2
-			if strings.HasPrefix(task.Arg2, "result") {
-				sourceTaskID, err := strconv.Atoi(strings.TrimPrefix(task.Arg2, "result"))
-				if err == nil {
-					usedAsInput[sourceTaskID] = true
-					log.Printf("  Задача #%d используется как входной аргумент в задаче #%d (Arg2)", sourceTaskID, taskID)
-				}
-			}
-		}
-		Manager.mu.Unlock()
-		
-		// Выводим задачи, которые используются как входные аргументы
-		log.Printf("Задачи, используемые как входные аргументы:")
-		for taskID := range usedAsInput {
-			log.Printf("  Задача #%d", taskID)
-		}
-		
-		// Теперь ищем задачи, которые не используются как входные аргументы
-		var rootCandidates []taskWithResult
-		for _, task := range tasksWithResults {
-			if !usedAsInput[task.id] {
-				rootCandidates = append(rootCandidates, task)
-				log.Printf("  Потенциальная корневая задача #%d с результатом %f для выражения %s", task.id, task.result, exprID)
-			}
-		}
-		
-		// Сортируем кандидатов по ID в порядке убывания (самый большой ID будет первым)
-		sort.Slice(rootCandidates, func(i, j int) bool {
-			return rootCandidates[i].id > rootCandidates[j].id
-		})
-
-		// Выбираем задачу с самым большим ID среди корневых кандидатов
-		if len(rootCandidates) > 0 {
-			finalTaskID = rootCandidates[0].id
-			finalResult = rootCandidates[0].result
-			finalFound = true
-			log.Printf("Найдена корневая задача #%d с результатом %f для выражения %s", finalTaskID, finalResult, exprID)
-		} else if len(tasksWithResults) > 0 {
-			// Если не нашли корневую задачу, используем задачу с самым большим ID
-			// Сортируем задачи по ID в порядке убывания (самый большой ID будет первым)
-			sort.Slice(tasksWithResults, func(i, j int) bool {
-				return tasksWithResults[i].id > tasksWithResults[j].id
-			})
-			
-			finalTaskID = tasksWithResults[0].id
-			finalResult = tasksWithResults[0].result
-			finalFound = true
-			log.Printf("Корневая задача не найдена, выбрана задача с самым большим ID #%d с результатом %f для выражения %s", finalTaskID, finalResult, exprID)
-		}
-
-		// Если нашли финальный результат, обновляем выражение
-		if finalFound {
-			// Обновляем выражение в памяти
-			Manager.mu.Lock()
-			if expr, ok := Manager.Expressions[exprID]; ok {
-				expr.Status = "completed"
-				expr.Result = finalResult
-				log.Printf("Обновлено выражение %s в памяти: статус=completed, результат=%f", exprID, finalResult)
-			} else {
-				log.Printf("Выражение %s не найдено в памяти", exprID)
-			}
-			Manager.mu.Unlock()
-
-			// Обновляем выражение в БД
-			if err := s.DB.UpdateExpressionStatus(exprID, "completed", finalResult); err != nil {
-				log.Printf("Ошибка при обновлении выражения %s в БД: %v", exprID, err)
-			} else {
-				log.Printf("Успешно обновлено выражение %s в БД: статус=completed, результат=%f", exprID, finalResult)
-			}
-		} else {
-			log.Printf("Не найден финальный результат для выражения %s", exprID)
-		}
-	}
+	// Обновляем статусы выражений
+	UpdateExpressions()
 
 	return &calculator.SubmitResultResponse{
 		Success: true,
