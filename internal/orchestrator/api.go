@@ -282,7 +282,7 @@ func TaskHandler(w http.ResponseWriter, r *http.Request) {
 				apiUpdateExpressions()
 				
 				// Обновляем список готовых задач
-				updateReadyTasks()
+				Manager.updateReadyTasksList()
 				
 				// Проверяем состояние менеджера после обновления
 				log.Printf("TaskHandler POST: Всего задач в системе: %d", len(Manager.Tasks))
@@ -446,7 +446,7 @@ func isTaskInQueue(task models.Task, queue []models.Task) bool {
 
 func apiUpdateExpressions() {
 	log.Println("apiUpdateExpressions: обновление статусов выражений")
-	updateReadyTasks()
+	Manager.updateReadyTasksList()
 	// Вызываем глобальную функцию обновления статусов выражений
 	UpdateExpressions()
 }
@@ -486,113 +486,4 @@ func processTask(taskId int, result float64) error {
 	return nil
 }
 
-func updateReadyTasks() {
-	log.Printf("updateReadyTasks: начало обновления списка готовых задач")
-
-	Manager.mu.Lock()
-	defer Manager.mu.Unlock()
-
-	// Сохраняем текущий список готовых задач для проверки
-	log.Printf("updateReadyTasks: текущий список готовых задач: %d", len(Manager.ReadyTasks))
-	
-	// Вместо полной очистки списка, удаляем только задачи, которые уже в обработке
-	var updatedReadyTasks []models.Task
-	for _, task := range Manager.ReadyTasks {
-		if !Manager.ProcessingTasks[task.ID] {
-			updatedReadyTasks = append(updatedReadyTasks, task)
-			log.Printf("updateReadyTasks: задача #%d остается в списке готовых", task.ID)
-		} else {
-			log.Printf("updateReadyTasks: задача #%d удалена из списка готовых, т.к. она в обработке", task.ID)
-		}
-	}
-	Manager.ReadyTasks = updatedReadyTasks
-
-	// Проверяем все активные задачи
-	for taskID, taskPtr := range Manager.Tasks {
-		// Проверяем, существует ли задача
-		if taskPtr == nil {
-			log.Printf("updateReadyTasks: задача #%d имеет nil указатель, пропускаем", taskID)
-			continue
-		}
-		
-		// Создаем копию задачи для безопасного изменения
-		task := *taskPtr
-		log.Printf("updateReadyTasks: проверка задачи #%d: %s %s %s", taskID, task.Arg1, task.Operation, task.Arg2)
-
-		// Проверяем, не находится ли задача уже в обработке
-		if Manager.ProcessingTasks[taskID] {
-			log.Printf("updateReadyTasks: задача #%d уже в обработке, пропускаем", taskID)
-			continue
-		}
-
-		// Добавляем флаг для отслеживания изменений в задаче
-		taskUpdated := false
-
-		// Проверяем и обновляем первый аргумент
-		if strings.HasPrefix(task.Arg1, "result") {
-			resultID := strings.TrimPrefix(task.Arg1, "result")
-			if id, err := strconv.Atoi(resultID); err == nil {
-				log.Printf("updateReadyTasks: задача #%d зависит от результата задачи #%d в Arg1", taskID, id)
-				if result, exists := Manager.Results[id]; exists {
-					log.Printf("updateReadyTasks: обновляем arg1 задачи #%d результатом задачи #%d: %f", taskID, id, result)
-					task.Arg1 = strconv.FormatFloat(result, 'f', -1, 64)
-					taskUpdated = true // Устанавливаем флаг, что задача обновлена
-				} else {
-					log.Printf("updateReadyTasks: результат задачи #%d не найден для обновления arg1 задачи #%d", id, taskID)
-				}
-			} else {
-				log.Printf("updateReadyTasks: ошибка при преобразовании ID результата в Arg1: %v", err)
-			}
-		}
-
-		// Проверяем и обновляем второй аргумент
-		if strings.HasPrefix(task.Arg2, "result") {
-			resultID := strings.TrimPrefix(task.Arg2, "result")
-			if id, err := strconv.Atoi(resultID); err == nil {
-				log.Printf("updateReadyTasks: задача #%d зависит от результата задачи #%d в Arg2", taskID, id)
-				if result, exists := Manager.Results[id]; exists {
-					log.Printf("updateReadyTasks: обновляем arg2 задачи #%d результатом задачи #%d: %f", taskID, id, result)
-					task.Arg2 = strconv.FormatFloat(result, 'f', -1, 64)
-					taskUpdated = true // Устанавливаем флаг, что задача обновлена
-				} else {
-					log.Printf("updateReadyTasks: результат задачи #%d не найден для обновления arg2 задачи #%d", id, taskID)
-				}
-			} else {
-				log.Printf("updateReadyTasks: ошибка при преобразовании ID результата в Arg2: %v", err)
-			}
-		}
-
-		// Если задача была обновлена, сохраняем изменения
-		if taskUpdated {
-			log.Printf("updateReadyTasks: задача #%d была обновлена, сохраняем изменения", taskID)
-			*taskPtr = task // Обновляем задачу через указатель
-			Manager.Tasks[taskID] = taskPtr // Обновляем указатель в карте задач
-		}
-
-		// Проверяем готовность задачи после всех обновлений
-		if IsTaskReady(task) {
-			log.Printf("updateReadyTasks: задача #%d готова к выполнению", taskID)
-			Manager.ReadyTasks = append(Manager.ReadyTasks, task)
-		} else {
-			log.Printf("updateReadyTasks: задача #%d не готова к выполнению", taskID)
-		}
-	}
-
-	// Проверяем еще раз после обновления аргументов
-	for taskID, taskPtr := range Manager.Tasks {
-		if taskPtr == nil {
-			continue
-		}
-		task := *taskPtr
-		if IsTaskReady(task) {
-			log.Printf("updateReadyTasks: задача #%d стала готова после обновления аргументов", taskID)
-			*taskPtr = task
-			Manager.ReadyTasks = append(Manager.ReadyTasks, task)
-		} else {
-			log.Printf("updateReadyTasks: задача #%d все еще не готова после обновления аргументов", taskID)
-			*taskPtr = task
-		}
-	}
-
-	log.Printf("updateReadyTasks: обновление завершено, готово задач: %d", len(Manager.ReadyTasks))
-}
+// Функция updateReadyTasks удалена, теперь используется метод Manager.updateReadyTasksList() из manager.go

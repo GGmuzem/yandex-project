@@ -49,12 +49,28 @@ func (gc *GRPCClient) GetTask() (models.Task, error) {
 	}
 	log.Printf("Агент #%d: Запрос задачи от сервера", gc.agentID)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Увеличиваем таймаут для большей надежности
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	resp, err := gc.client.GetTask(ctx, req)
+	// Добавляем механизм повторных попыток при ошибке связи
+	var resp *calculator.Task
+	var err error
+	maxRetries := 3
+	for retries := 0; retries < maxRetries; retries++ {
+		resp, err = gc.client.GetTask(ctx, req)
+		if err == nil {
+			break
+		}
+		log.Printf("Агент #%d: Ошибка при получении задачи (попытка %d/%d): %v", 
+			gc.agentID, retries+1, maxRetries, err)
+		if retries < maxRetries-1 {
+			time.Sleep(time.Duration(500*(retries+1)) * time.Millisecond) // Увеличиваем интервал между попытками
+		}
+	}
+
 	if err != nil {
-		log.Printf("Агент #%d: Ошибка при получении задачи: %v", gc.agentID, err)
+		log.Printf("Агент #%d: Не удалось получить задачу после %d попыток: %v", gc.agentID, maxRetries, err)
 		return models.Task{}, err
 	}
 
@@ -62,8 +78,8 @@ func (gc *GRPCClient) GetTask() (models.Task, error) {
 		gc.agentID, resp.ID, resp.Arg1, resp.Arg2, resp.Operation, resp.ExpressionID, resp.OperationTime)
 
 	// Улучшенная проверка на пустой ответ от сервера - проверка всех полей
-	if resp.ID == 0 && resp.Arg1 == "" && resp.Arg2 == "" && resp.Operation == "" {
-		log.Printf("Агент #%d: Получен пустой ответ от сервера (нет задач), запрошу задачу позже", gc.agentID)
+	if resp.ID == 0 {
+		log.Printf("Агент #%d: Получен пустой ответ от сервера (нет готовых задач), запрошу задачу позже", gc.agentID)
 		return models.Task{}, nil
 	}
 
@@ -83,7 +99,7 @@ func (gc *GRPCClient) GetTask() (models.Task, error) {
 		OperationTime: int(resp.OperationTime),
 	}
 
-	log.Printf("Агент #%d: Преобразовал в модель задачи: ID=%d, Arg1='%s', Arg2='%s', Operation='%s', ExpressionID='%s'",
+	log.Printf("Агент #%d: Успешно получена задача: ID=%d, Arg1='%s', Arg2='%s', Operation='%s', ExpressionID='%s'",
 		gc.agentID, task.ID, task.Arg1, task.Arg2, task.Operation, task.ExpressionID)
 
 	return task, nil
@@ -91,7 +107,8 @@ func (gc *GRPCClient) GetTask() (models.Task, error) {
 
 // SubmitResult отправляет результат задачи оркестратору
 func (c *GRPCClient) SubmitResult(result *models.TaskResult, expressionID string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Увеличиваем таймаут для большей надежности
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	// Преобразуем результат в protobuf формат
@@ -101,17 +118,45 @@ func (c *GRPCClient) SubmitResult(result *models.TaskResult, expressionID string
 		ExpressionID: expressionID,
 	}
 
-	// Отправляем результат
-	resp, err := c.client.SubmitResult(ctx, pbResult)
-	if err != nil {
-		log.Printf("Ошибка отправки результата: %v", err)
-		return err
-	}
-	log.Printf("SubmitResultResponse от сервера: success=%v, message=%s", resp.Success, resp.Message)
-	if !resp.Success {
-		return fmt.Errorf("SubmitResult failed: %s", resp.Message)
+	log.Printf("Агент #%d: Отправка результата задачи #%d: %f, выражение: %s", 
+		c.agentID, result.ID, result.Result, expressionID)
+
+	// Добавляем механизм повторных попыток при ошибке связи
+	var resp *calculator.SubmitResultResponse
+	var err error
+	maxRetries := 5
+	for retries := 0; retries < maxRetries; retries++ {
+		// Отправляем результат
+		resp, err = c.client.SubmitResult(ctx, pbResult)
+		if err == nil {
+			break
+		}
+		log.Printf("Агент #%d: Ошибка отправки результата задачи #%d (попытка %d/%d): %v", 
+			c.agentID, result.ID, retries+1, maxRetries, err)
+		if retries < maxRetries-1 {
+			// Увеличиваем интервал между попытками (экспоненциальный бэкофф)
+			backoff := time.Duration(500*(1<<retries)) * time.Millisecond
+			log.Printf("Агент #%d: Ожидание %v перед следующей попыткой", c.agentID, backoff)
+			time.Sleep(backoff)
+		}
 	}
 
+	if err != nil {
+		log.Printf("Агент #%d: Не удалось отправить результат задачи #%d после %d попыток: %v", 
+			c.agentID, result.ID, maxRetries, err)
+		return err
+	}
+
+	log.Printf("Агент #%d: Ответ сервера на результат задачи #%d: success=%v, message=%s", 
+		c.agentID, result.ID, resp.Success, resp.Message)
+
+	if !resp.Success {
+		log.Printf("Агент #%d: Сервер отклонил результат задачи #%d: %s", 
+			c.agentID, result.ID, resp.Message)
+		return fmt.Errorf("сервер отклонил результат: %s", resp.Message)
+	}
+
+	log.Printf("Агент #%d: Результат задачи #%d успешно отправлен", c.agentID, result.ID)
 	return nil
 }
 
@@ -128,8 +173,6 @@ func StartGRPCWorker(id int, serverAddr string) {
 
 	// Интервал между запросами при отсутствии задач
 	retryInterval := 1000 * time.Millisecond
-	// Максимальное количество попыток отправки результата
-	maxRetries := 5
 
 	// Отладочный код: пробуем напрямую запросить задачу один раз
 	task, err := client.GetTask()
@@ -162,31 +205,44 @@ func StartGRPCWorker(id int, serverAddr string) {
 		task, err := client.GetTask()
 		if err != nil {
 			log.Printf("Воркер gRPC %d: ошибка получения задачи: %v", id, err)
-			time.Sleep(retryInterval)
+			// Увеличиваем интервал при ошибке связи
+			time.Sleep(retryInterval * 2)
 			continue
 		}
 
 		// Если задач нет, ждем и пробуем снова
 		if task == (models.Task{}) {
+			// Динамически регулируем интервал опроса в зависимости от загрузки
+			log.Printf("Воркер gRPC %d: нет готовых задач, ожидание %v", id, retryInterval)
 			time.Sleep(retryInterval)
+			// Постепенно увеличиваем интервал при отсутствии задач, но не более 5 секунд
+			if retryInterval < 5*time.Second {
+				retryInterval += 100 * time.Millisecond
+			}
 			continue
+		} else {
+			// Сбрасываем интервал при получении задачи
+			retryInterval = 1000 * time.Millisecond
 		}
 
 		// Проверка на пустые аргументы
 		if task.Arg1 == "" || task.Arg2 == "" {
-			log.Printf("Ошибка: пустые аргументы в задаче #%d: '%s', '%s'", task.ID, task.Arg1, task.Arg2)
+			log.Printf("Воркер gRPC %d: ошибка - пустые аргументы в задаче #%d: '%s', '%s'", id, task.ID, task.Arg1, task.Arg2)
 			time.Sleep(retryInterval)
 			continue
 		}
 
-		log.Printf("Воркер gRPC %d: получена задача #%d: %s %s %s", id, task.ID, task.Arg1, task.Operation, task.Arg2)
+		log.Printf("Воркер gRPC %d: получена задача #%d: %s %s %s, ExprID=%s", 
+			id, task.ID, task.Arg1, task.Operation, task.Arg2, task.ExpressionID)
 
 		// Вычисляем результат
 		result := computeTask(task)
 
 		// Имитируем длительное время вычисления
-		log.Printf("Воркер gRPC %d: выполняется задача #%d (%d мс)...", id, task.ID, task.OperationTime)
-		time.Sleep(time.Duration(task.OperationTime) * time.Millisecond)
+		if task.OperationTime > 0 {
+			log.Printf("Воркер gRPC %d: выполняется задача #%d (%d мс)...", id, task.ID, task.OperationTime)
+			time.Sleep(time.Duration(task.OperationTime) * time.Millisecond)
+		}
 
 		// Результат задачи
 		taskResult := &models.TaskResult{
@@ -196,31 +252,14 @@ func StartGRPCWorker(id int, serverAddr string) {
 
 		log.Printf("Воркер gRPC %d: готов результат задачи #%d: %f", id, task.ID, result)
 
-		// Механизм повторных попыток отправки результата
-		retryCount := 0
-		success := false
-
-		for retryCount < maxRetries && !success {
-			if retryCount > 0 {
-				log.Printf("Воркер gRPC %d: повторная попытка #%d отправки результата задачи #%d", id, retryCount, task.ID)
-				time.Sleep(retryInterval * time.Duration(retryCount)) // Увеличиваем интервал с каждой попыткой
-			}
-
-			err := client.SubmitResult(taskResult, task.ExpressionID)
-			if err != nil {
-				log.Printf("Воркер gRPC %d: ошибка отправки результата (попытка %d): %v", id, retryCount+1, err)
-				retryCount++
-				continue
-			}
-
-			success = true
+		// Отправляем результат через улучшенный метод SubmitResult
+		err = client.SubmitResult(taskResult, task.ExpressionID)
+		if err != nil {
+			log.Printf("Воркер gRPC %d: не удалось отправить результат задачи #%d: %v", id, task.ID, err)
+			// При ошибке отправки результата делаем паузу перед следующей задачей
+			time.Sleep(retryInterval)
+		} else {
 			log.Printf("Воркер gRPC %d: задача #%d успешно завершена, результат: %f", id, task.ID, result)
-			break
-		}
-
-		if !success {
-			log.Printf("Воркер gRPC %d: не удалось отправить результат задачи #%d после %d попыток",
-				id, task.ID, maxRetries)
 		}
 	}
 }
