@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/GGmuzem/yandex-project/pkg/models"
+	"github.com/GGmuzem/yandex-project/internal/database"
 )
 
 // Статусы задач
@@ -19,6 +20,9 @@ const (
 )
 
 // Используем глобальный Manager из manager.go
+
+// DB is the database instance for persisting results and expression statuses
+var DB database.Database
 
 func CalculateHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -46,6 +50,10 @@ func CalculateHandler(w http.ResponseWriter, r *http.Request) {
 	// Добавляем задачи в глобальный менеджер
 	log.Printf("Добавление задач в глобальный менеджер")
 	Manager.AddExpression(exprID, tasks)
+	
+	// Обновляем статусы выражений и список готовых задач
+	log.Printf("Вызов apiUpdateExpressions после добавления задач")
+	apiUpdateExpressions()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -77,14 +85,51 @@ func GetExpressionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := strings.TrimPrefix(r.URL.Path, "/api/v1/expressions/")
+	log.Printf("GetExpressionHandler: Запрошено выражение %s", id)
+
+	// Получаем выражение из менеджера
 	Manager.mu.Lock()
 	expr, exists := Manager.Expressions[id]
 	Manager.mu.Unlock()
 
 	if !exists {
+		log.Printf("GetExpressionHandler: Выражение %s не найдено", id)
 		http.Error(w, "Expression not found", http.StatusNotFound)
 		return
 	}
+
+	// Проверяем, есть ли результаты в БД
+	if expr.Status == "completed" && DB != nil {
+		// Получаем последний результат для этого выражения из БД
+		results, err := DB.GetResultsByExprID(id)
+		if err != nil {
+			log.Printf("GetExpressionHandler: Ошибка при получении результатов из БД: %v", err)
+		} else if len(results) > 0 {
+			// Находим последний результат (с наибольшим ID)
+			lastTaskID := 0
+			lastResult := 0.0
+			for taskID, result := range results {
+				if taskID > lastTaskID {
+					lastTaskID = taskID
+					lastResult = result
+				}
+			}
+			
+			log.Printf("GetExpressionHandler: Найден последний результат для выражения %s: %f (задача #%d)", id, lastResult, lastTaskID)
+			
+			// Обновляем результат выражения
+			expr.Result = lastResult
+			
+			// Обновляем также в менеджере
+			Manager.mu.Lock()
+			if e, ok := Manager.Expressions[id]; ok {
+				e.Result = lastResult
+			}
+			Manager.mu.Unlock()
+		}
+	}
+
+	log.Printf("GetExpressionHandler: Отправляем выражение %s со статусом %s и результатом %f", id, expr.Status, expr.Result)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -92,6 +137,7 @@ func GetExpressionHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func TaskHandler(w http.ResponseWriter, r *http.Request) {
+	log.Println("TaskHandler: incoming", r.Method)
 	if r.Method == http.MethodGet {
 		// Используем метод GetTask из Manager для получения задачи
 		task, found := Manager.GetTask()
@@ -130,7 +176,38 @@ func TaskHandler(w http.ResponseWriter, r *http.Request) {
 
 		if success {
 			log.Printf("TaskHandler POST: результат задачи #%d успешно обработан", result.ID)
+			
+			// Находим ID выражения для этой задачи
+			exprID := ""
+			for taskID, id := range Manager.TaskToExpr {
+				if taskID == result.ID {
+					exprID = id
+					break
+				}
+			}
+			
+			if exprID != "" {
+				// Сначала сохраняем результат в БД
+				if err := DB.SaveResult(result.ID, result.Result, exprID); err != nil {
+					log.Printf("TaskHandler POST: ошибка сохранения результата в БД: %v", err)
+				} else {
+					log.Printf("TaskHandler POST: результат задачи #%d сохранен в БД", result.ID)
+				}
+				
+					// Затем обновляем статусы выражений в памяти
+				log.Printf("TaskHandler POST: Вызываем apiUpdateExpressions для обновления статусов выражений")
+				apiUpdateExpressions()
+				
+				// Проверяем состояние менеджера после обновления
+				log.Printf("TaskHandler POST: Всего задач в системе: %d", len(Manager.Tasks))
+				log.Printf("TaskHandler POST: Всего результатов в системе: %d", len(Manager.Results))
+				log.Printf("TaskHandler POST: Всего готовых задач: %d", len(Manager.ReadyTasks))
+			}
+			
+			// Respond with expression statuses
+			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string][]models.Expression{"expressions": Manager.GetAllExpressions()})
 		} else {
 			log.Printf("TaskHandler POST: ошибка обработки результата задачи #%d", result.ID)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -186,7 +263,7 @@ func processTaskDependencies(taskID int, taskResult float64) {
 		log.Printf("Задача #%d обновлена: %s %s %s", id, task.Arg1, task.Operation, task.Arg2)
 
 		// Проверяем, стала ли задача готовой к выполнению
-		if apiIsTaskReady(task) {
+		if IsTaskReady(task) {
 			log.Printf("Задача #%d теперь готова к выполнению", id)
 
 			// Проверяем, нет ли этой задачи уже в очереди готовых
@@ -284,6 +361,8 @@ func isTaskInQueue(task models.Task, queue []models.Task) bool {
 func apiUpdateExpressions() {
 	log.Println("apiUpdateExpressions: обновление статусов выражений")
 	updateReadyTasks()
+	// Вызываем глобальную функцию обновления статусов выражений
+	UpdateExpressions()
 }
 
 // Проверяет, находится ли задача в процессе обработки
@@ -327,8 +406,20 @@ func updateReadyTasks() {
 	Manager.mu.Lock()
 	defer Manager.mu.Unlock()
 
-	// Очищаем текущий список готовых задач
-	Manager.ReadyTasks = []models.Task{}
+	// Сохраняем текущий список готовых задач для проверки
+	log.Printf("updateReadyTasks: текущий список готовых задач: %d", len(Manager.ReadyTasks))
+	
+	// Вместо полной очистки списка, удаляем только задачи, которые уже в обработке
+	var updatedReadyTasks []models.Task
+	for _, task := range Manager.ReadyTasks {
+		if !Manager.ProcessingTasks[task.ID] {
+			updatedReadyTasks = append(updatedReadyTasks, task)
+			log.Printf("updateReadyTasks: задача #%d остается в списке готовых", task.ID)
+		} else {
+			log.Printf("updateReadyTasks: задача #%d удалена из списка готовых, т.к. она в обработке", task.ID)
+		}
+	}
+	Manager.ReadyTasks = updatedReadyTasks
 
 	// Проверяем все активные задачи
 	for taskID, taskPtr := range Manager.Tasks {
@@ -342,35 +433,53 @@ func updateReadyTasks() {
 		}
 
 		// Проверяем готовность задачи
-		if apiIsTaskReady(task) {
+		if IsTaskReady(task) {
 			log.Printf("updateReadyTasks: задача #%d готова к выполнению", taskID)
 			Manager.ReadyTasks = append(Manager.ReadyTasks, task)
 		} else {
 			log.Printf("updateReadyTasks: задача #%d не готова к выполнению", taskID)
 
 			// Проверяем, можем ли мы обновить аргументы задачи
+			// Детально логируем все доступные результаты
+			log.Printf("updateReadyTasks: Доступные результаты:")
+			for resultID, resultValue := range Manager.Results {
+				log.Printf("  Результат задачи #%d: %f", resultID, resultValue)
+			}
+			
+			// Проверяем и обновляем первый аргумент
 			if strings.HasPrefix(task.Arg1, "result") {
 				resultID := strings.TrimPrefix(task.Arg1, "result")
 				if id, err := strconv.Atoi(resultID); err == nil {
+					log.Printf("updateReadyTasks: задача #%d зависит от результата задачи #%d в Arg1", taskID, id)
 					if result, exists := Manager.Results[id]; exists {
 						log.Printf("updateReadyTasks: обновляем arg1 задачи #%d результатом задачи #%d: %f", taskID, id, result)
 						task.Arg1 = strconv.FormatFloat(result, 'f', -1, 64)
+					} else {
+						log.Printf("updateReadyTasks: результат задачи #%d не найден для обновления arg1 задачи #%d", id, taskID)
 					}
+				} else {
+					log.Printf("updateReadyTasks: ошибка при преобразовании ID результата в Arg1: %v", err)
 				}
 			}
 
+			// Проверяем и обновляем второй аргумент
 			if strings.HasPrefix(task.Arg2, "result") {
 				resultID := strings.TrimPrefix(task.Arg2, "result")
 				if id, err := strconv.Atoi(resultID); err == nil {
+					log.Printf("updateReadyTasks: задача #%d зависит от результата задачи #%d в Arg2", taskID, id)
 					if result, exists := Manager.Results[id]; exists {
 						log.Printf("updateReadyTasks: обновляем arg2 задачи #%d результатом задачи #%d: %f", taskID, id, result)
 						task.Arg2 = strconv.FormatFloat(result, 'f', -1, 64)
+					} else {
+						log.Printf("updateReadyTasks: результат задачи #%d не найден для обновления arg2 задачи #%d", id, taskID)
 					}
+				} else {
+					log.Printf("updateReadyTasks: ошибка при преобразовании ID результата в Arg2: %v", err)
 				}
 			}
 
 			// Проверяем еще раз после обновления аргументов
-			if apiIsTaskReady(task) {
+			if IsTaskReady(task) {
 				log.Printf("updateReadyTasks: задача #%d стала готова после обновления аргументов", taskID)
 				*taskPtr = task
 				Manager.ReadyTasks = append(Manager.ReadyTasks, task)

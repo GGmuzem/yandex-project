@@ -3,16 +3,67 @@ package agent
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
-
 	"log"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/GGmuzem/yandex-project/pkg/models"
 )
+
+// getTaskResult получает результат задачи от оркестратора
+func getTaskResult(taskID int) (float64, error) {
+	// В идеале здесь должен быть запрос к оркестратору через HTTP или gRPC
+	// Но так как оркестратор уже проверил, что задача готова к выполнению,
+	// и агент получает только готовые задачи, мы можем просто использовать
+	// значение, которое уже должно быть в аргументе
+	
+	// Получаем адрес HTTP сервера из переменной окружения
+	httpServer := os.Getenv("HTTP_SERVER")
+	if httpServer == "" {
+		httpServer = "localhost:8080"
+	}
+	
+	// Формируем URL для запроса результата задачи
+	url := fmt.Sprintf("http://%s/internal/task/result/%d", httpServer, taskID)
+	
+	// Отправляем GET запрос
+	resp, err := http.Get(url)
+	if err != nil {
+		log.Printf("Ошибка при запросе результата задачи #%d: %v", taskID, err)
+		return 0, err
+	}
+	defer resp.Body.Close()
+	
+	// Проверяем статус ответа
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Ошибка при запросе результата задачи #%d: статус %d", taskID, resp.StatusCode)
+		return 0, fmt.Errorf("ошибка при запросе результата: статус %d", resp.StatusCode)
+	}
+	
+	// Читаем тело ответа
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("Ошибка при чтении ответа: %v", err)
+		return 0, err
+	}
+	
+	// Парсим JSON ответ
+	var result struct {
+		Value float64 `json:"value"`
+	}
+	
+	if err := json.Unmarshal(body, &result); err != nil {
+		log.Printf("Ошибка при разборе JSON: %v", err)
+		return 0, err
+	}
+	
+	return result.Value, nil
+}
 
 // StartWorker запускает агент с несколькими воркерами
 func StartWorker() {
@@ -35,6 +86,13 @@ func StartWorker() {
 func workerLoop(id int) {
 	client := &http.Client{Timeout: 10 * time.Second}
 
+	// Настройка HTTP-сервера для запросов задач
+	httpServer := os.Getenv("HTTP_SERVER")
+	if httpServer == "" {
+		httpServer = "localhost:8080"
+	}
+	taskURL := "http://" + httpServer + "/internal/task"
+
 	// Интервал между запросами при отсутствии задач
 	retryInterval := 100 * time.Millisecond
 	// Максимальное количество попыток отправки результата
@@ -44,7 +102,7 @@ func workerLoop(id int) {
 
 	for {
 		// Запрашиваем задачу от оркестратора
-		req, err := http.NewRequest("GET", "http://localhost:8080/internal/task", nil)
+		req, err := http.NewRequest("GET", taskURL, nil)
 		if err != nil {
 			log.Printf("Воркер %d: ошибка создания запроса: %v", id, err)
 			time.Sleep(retryInterval)
@@ -121,7 +179,7 @@ func workerLoop(id int) {
 			}
 
 			// Создаем новый буфер для каждой попытки
-			resp, err = client.Post("http://localhost:8080/internal/task", "application/json", bytes.NewBuffer(resultData))
+			resp, err = client.Post(taskURL, "application/json", bytes.NewBuffer(resultData))
 
 			if err != nil {
 				log.Printf("Воркер %d: ошибка отправки результата (попытка %d): %v", id, retryCount+1, err)
@@ -163,20 +221,82 @@ func computeTask(t models.Task) float64 {
 
 	// Проверка, является ли аргумент ссылкой на результат другой задачи
 	var a, b float64
-	var errA, errB error
 
 	// Обработка первого аргумента
-	a, errA = strconv.ParseFloat(t.Arg1, 64)
-	if errA != nil {
-		log.Printf("Невозможно преобразовать аргумент 1 '%s' в число для задачи #%d: %v", t.Arg1, t.ID, errA)
-		return 0
+	if strings.HasPrefix(t.Arg1, "result") {
+		// Это ссылка на результат другой задачи
+		// Результаты должны быть предварительно подготовлены оркестратором
+		// Агент получает задачу только когда она готова к выполнению
+		// Поэтому мы просто извлекаем числовое значение из аргумента
+		log.Printf("Задача #%d: аргумент 1 '%s' является ссылкой на результат другой задачи", t.ID, t.Arg1)
+		
+		// Извлекаем ID задачи из ссылки (например, из "result1" получаем "1")
+		resultID := strings.TrimPrefix(t.Arg1, "result")
+		
+		// Преобразуем ID в число
+		resultTaskID, err := strconv.Atoi(resultID)
+		if err != nil {
+			log.Printf("Ошибка при извлечении ID задачи из ссылки '%s': %v", t.Arg1, err)
+			return 0
+		}
+		
+		// Получаем результат предыдущей задачи от оркестратора
+		// Это должно быть сделано через HTTP или gRPC запрос к оркестратору
+		// Но так как оркестратор уже проверил, что задача готова к выполнению,
+		// и агент получает только готовые задачи, мы можем просто использовать
+		// числовое значение, переданное в аргументе
+		
+		// Запрашиваем результат у оркестратора
+		result, err := getTaskResult(resultTaskID)
+		if err != nil {
+			log.Printf("Ошибка при получении результата задачи #%d: %v", resultTaskID, err)
+			return 0
+		}
+		
+		a = result
+		log.Printf("Задача #%d: получен результат задачи #%d: %f", t.ID, resultTaskID, a)
+	} else {
+		// Обычное числовое значение
+		var errA error
+		a, errA = strconv.ParseFloat(t.Arg1, 64)
+		if errA != nil {
+			log.Printf("Невозможно преобразовать аргумент 1 '%s' в число для задачи #%d: %v", t.Arg1, t.ID, errA)
+			return 0
+		}
 	}
 
 	// Обработка второго аргумента
-	b, errB = strconv.ParseFloat(t.Arg2, 64)
-	if errB != nil {
-		log.Printf("Невозможно преобразовать аргумент 2 '%s' в число для задачи #%d: %v", t.Arg2, t.ID, errB)
-		return 0
+	if strings.HasPrefix(t.Arg2, "result") {
+		// Это ссылка на результат другой задачи
+		log.Printf("Задача #%d: аргумент 2 '%s' является ссылкой на результат другой задачи", t.ID, t.Arg2)
+		
+		// Извлекаем ID задачи из ссылки
+		resultID := strings.TrimPrefix(t.Arg2, "result")
+		
+		// Преобразуем ID в число
+		resultTaskID, err := strconv.Atoi(resultID)
+		if err != nil {
+			log.Printf("Ошибка при извлечении ID задачи из ссылки '%s': %v", t.Arg2, err)
+			return 0
+		}
+		
+		// Получаем результат предыдущей задачи
+		result, err := getTaskResult(resultTaskID)
+		if err != nil {
+			log.Printf("Ошибка при получении результата задачи #%d: %v", resultTaskID, err)
+			return 0
+		}
+		
+		b = result
+		log.Printf("Задача #%d: получен результат задачи #%d: %f", t.ID, resultTaskID, b)
+	} else {
+		// Обычное числовое значение
+		var errB error
+		b, errB = strconv.ParseFloat(t.Arg2, 64)
+		if errB != nil {
+			log.Printf("Невозможно преобразовать аргумент 2 '%s' в число для задачи #%d: %v", t.Arg2, t.ID, errB)
+			return 0
+		}
 	}
 
 	log.Printf("Задача #%d: преобразованные аргументы: %f %s %f", t.ID, a, t.Operation, b)

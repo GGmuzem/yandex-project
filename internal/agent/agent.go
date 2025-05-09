@@ -60,7 +60,7 @@ func (a *Agent) Run(ctx context.Context) {
 
 			// Если задач нет, ждем и пробуем снова
 			if (task == models.Task{}) {
-				log.Printf("Агент #%d: задач нет, ожидание %v", a.grpcClient.agentID, retryInterval)
+				log.Printf("Агент #%d: нет задач, ожидание %v", a.grpcClient.agentID, retryInterval)
 				time.Sleep(retryInterval)
 				continue
 			}
@@ -84,10 +84,10 @@ func (a *Agent) Run(ctx context.Context) {
 			if err != nil {
 				log.Printf("Агент #%d: ошибка при отправке результата задачи #%d: %v",
 					a.grpcClient.agentID, task.ID, err)
-			} else {
-				log.Printf("Агент #%d: результат задачи #%d успешно отправлен (результат = %f)",
-					a.grpcClient.agentID, task.ID, result.Value)
+				continue
 			}
+			log.Printf("Агент #%d: результат задачи #%d успешно отправлен (результат = %f)",
+				a.grpcClient.agentID, task.ID, result.Value)
 		}
 	}
 }
@@ -174,21 +174,21 @@ func (a *Agent) StartProcessing() {
 		if err != nil {
 			// Если ошибка - ждем и пробуем снова
 			log.Printf("Воркер gRPC %d: Ошибка получения задачи: %v", a.grpcClient.agentID, err)
-			time.Sleep(5 * time.Second)
+			time.Sleep(500 * time.Millisecond)
 			continue
 		}
 
 		// Если произошла ошибка или нет задач, продолжаем опрашивать сервер
 		if err != nil {
 			log.Printf("Воркер gRPC %d: Ошибка получения задачи: %v", a.grpcClient.agentID, err)
-			time.Sleep(1 * time.Second)
+			time.Sleep(500 * time.Millisecond)
 			continue
 		}
 
 		// Проверяем, что задача не пустая
 		if task.ID == 0 && task.Operation == "" && task.Arg1 == "" && task.Arg2 == "" {
 			log.Printf("Воркер gRPC %d: Получена пустая задача, ожидание", a.grpcClient.agentID)
-			time.Sleep(1 * time.Second)
+			time.Sleep(500 * time.Millisecond)
 			continue
 		}
 

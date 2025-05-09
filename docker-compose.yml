@@ -1,5 +1,3 @@
-
-
 services:
   orchestrator:
     build:
@@ -17,6 +15,7 @@ services:
       - STATIC_DIR=/app/web/static
       - TEMPLATE_DIR=/app/web/templates
       - CGO_ENABLED=1
+      - GRPC_PORT=50051
     restart: unless-stopped
     networks:
       - calc-network
@@ -39,6 +38,8 @@ services:
       - COMPUTING_POWER=5
       - GRPC_SERVER=orchestrator:50051
       - CGO_ENABLED=1
+      - HTTP_SERVER=orchestrator:8080
+      - USE_HTTP=true
     restart: unless-stopped
     networks:
       - calc-network
@@ -55,10 +56,12 @@ services:
       - COMPUTING_POWER=5
       - GRPC_SERVER=orchestrator:50051
       - CGO_ENABLED=1
+      - HTTP_SERVER=orchestrator:8080
+      - USE_HTTP=true
     restart: unless-stopped
     networks:
       - calc-network
 
 networks:
   calc-network:
-    driver: bridge 
+    driver: bridge

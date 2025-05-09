@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/GGmuzem/yandex-project/pkg/models"
@@ -40,8 +41,14 @@ func (db *SQLiteDB) Close() error {
 
 // MigrateDB выполняет миграцию базы данных
 func (db *SQLiteDB) MigrateDB() error {
+	// Удаляем старую таблицу results
+	_, err := db.db.Exec(`DROP TABLE IF EXISTS results`)
+	if err != nil {
+		return fmt.Errorf("не удалось удалить таблицу results: %w", err)
+	}
+
 	// Создаем таблицу пользователей
-	_, err := db.db.Exec(`
+	_, err = db.db.Exec(`
 	CREATE TABLE IF NOT EXISTS users (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		login TEXT NOT NULL UNIQUE,
@@ -69,7 +76,8 @@ func (db *SQLiteDB) MigrateDB() error {
 	// Создаем таблицу для хранения результатов вычислений
 	_, err = db.db.Exec(`
 	CREATE TABLE IF NOT EXISTS results (
-		task_id INTEGER PRIMARY KEY,
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		task_id INTEGER NOT NULL UNIQUE,
 		result REAL NOT NULL,
 		expression_id TEXT NOT NULL,
 		created_at INTEGER NOT NULL,
@@ -77,6 +85,12 @@ func (db *SQLiteDB) MigrateDB() error {
 	)`)
 	if err != nil {
 		return fmt.Errorf("не удалось создать таблицу results: %w", err)
+	}
+	
+	// Создаем индекс для ускорения поиска по expression_id
+	_, err = db.db.Exec(`CREATE INDEX IF NOT EXISTS idx_results_expression_id ON results(expression_id)`)
+	if err != nil {
+		return fmt.Errorf("не удалось создать индекс для таблицы results: %w", err)
 	}
 
 	return nil
@@ -153,11 +167,49 @@ func (db *SQLiteDB) SaveExpression(expr *models.Expression) error {
 
 // UpdateExpressionStatus обновляет статус выражения
 func (db *SQLiteDB) UpdateExpressionStatus(id string, status string, result float64) error {
-	_, err := db.db.Exec(
+	log.Printf("=== ОТЛАДКА SQLiteDB.UpdateExpressionStatus: Обновление выражения %s, статус %s, результат %f", id, status, result)
+	
+	// Проверяем текущее значение в БД перед обновлением
+	var currentStatus string
+	var currentResult sql.NullFloat64
+	err := db.db.QueryRow("SELECT status, result FROM expressions WHERE id = ?", id).Scan(&currentStatus, &currentResult)
+	if err != nil {
+		log.Printf("=== ОТЛАДКА SQLiteDB.UpdateExpressionStatus: Ошибка при чтении текущего значения: %v", err)
+	} else {
+		var currentResultValue float64
+		if currentResult.Valid {
+			currentResultValue = currentResult.Float64
+		}
+		log.Printf("=== ОТЛАДКА SQLiteDB.UpdateExpressionStatus: Текущее значение в БД: статус %s, результат %f", currentStatus, currentResultValue)
+	}
+	
+	// Выполняем обновление
+	res, err := db.db.Exec(
 		"UPDATE expressions SET status = ?, result = ? WHERE id = ?",
 		status, result, id,
 	)
-	return err
+	
+	if err != nil {
+		log.Printf("=== ОТЛАДКА SQLiteDB.UpdateExpressionStatus: Ошибка при обновлении: %v", err)
+		return err
+	}
+	
+	rowsAffected, _ := res.RowsAffected()
+	log.Printf("=== ОТЛАДКА SQLiteDB.UpdateExpressionStatus: Обновлено строк: %d", rowsAffected)
+	
+	// Проверяем значение после обновления
+	err = db.db.QueryRow("SELECT status, result FROM expressions WHERE id = ?", id).Scan(&currentStatus, &currentResult)
+	if err != nil {
+		log.Printf("=== ОТЛАДКА SQLiteDB.UpdateExpressionStatus: Ошибка при чтении обновленного значения: %v", err)
+	} else {
+		var currentResultValue float64
+		if currentResult.Valid {
+			currentResultValue = currentResult.Float64
+		}
+		log.Printf("=== ОТЛАДКА SQLiteDB.UpdateExpressionStatus: После обновления в БД: статус %s, результат %f", currentStatus, currentResultValue)
+	}
+	
+	return nil
 }
 
 // GetExpression возвращает выражение по ID и user_id
@@ -219,19 +271,16 @@ func (db *SQLiteDB) GetExpressions(userID int) ([]*models.Expression, error) {
 	return expressions, nil
 }
 
-// SaveResult сохраняет результат вычисления задачи
+// SaveResult теперь ничего не делает. Результаты сохраняются в таблице expressions.
 func (db *SQLiteDB) SaveResult(taskID int, result float64, exprID string) error {
-	_, err := db.db.Exec(
-		"INSERT INTO results (task_id, result, expression_id, created_at) VALUES (?, ?, ?, ?)",
-		taskID, result, exprID, time.Now().Unix(),
-	)
-	return err
+	log.Printf("=== ОТЛАДКА SQLiteDB.SaveResult: Задача #%d, результат %f, выражение %s - ничего не делаю", taskID, result, exprID)
+	return nil
 }
 
 // GetResult возвращает результат задачи по ID
 func (db *SQLiteDB) GetResult(taskID int) (float64, error) {
 	var result float64
-	err := db.db.QueryRow("SELECT result FROM results WHERE task_id = ?", taskID).Scan(&result)
+	err := db.db.QueryRow("SELECT result FROM expressions WHERE id = ?", taskID).Scan(&result)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return 0, fmt.Errorf("результат для задачи %d не найден", taskID)
@@ -243,7 +292,11 @@ func (db *SQLiteDB) GetResult(taskID int) (float64, error) {
 
 // GetResultsByExprID возвращает все результаты для выражения
 func (db *SQLiteDB) GetResultsByExprID(exprID string) (map[int]float64, error) {
-	rows, err := db.db.Query("SELECT task_id, result FROM results WHERE expression_id = ?", exprID)
+	rows, err := db.db.Query(`
+		SELECT task_id, result 
+		FROM results 
+		WHERE expression_id = ?
+		ORDER BY created_at DESC`, exprID)
 	if err != nil {
 		return nil, err
 	}
@@ -259,9 +312,25 @@ func (db *SQLiteDB) GetResultsByExprID(exprID string) (map[int]float64, error) {
 		results[taskID] = result
 	}
 
-	if err = rows.Err(); err != nil {
+	return results, nil
+}
+
+// GetLastResultByExprID возвращает последний результат для выражения
+func (db *SQLiteDB) GetLastResultByExprID(exprID string) (*models.TaskResult, error) {
+	result := &models.TaskResult{}
+	err := db.db.QueryRow(`
+		SELECT task_id, result 
+		FROM results 
+		WHERE expression_id = ?
+		ORDER BY created_at DESC
+		LIMIT 1`, exprID).Scan(&result.ID, &result.Result)
+	
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
 		return nil, err
 	}
 
-	return results, nil
+	return result, nil
 }

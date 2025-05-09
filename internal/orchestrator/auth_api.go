@@ -213,14 +213,14 @@ func (h *AuthHandlers) CalculateWithAuthHandler(w http.ResponseWriter, r *http.R
 		log.Printf("Структура созданных задач для выражения %s:", exprID)
 		for i, t := range taskList {
 			log.Printf("Задача %d: ID=%d, %s %s %s, Готова: %v",
-				i+1, t.ID, t.Arg1, t.Operation, t.Arg2, isTaskReady(t))
+				i+1, t.ID, t.Arg1, t.Operation, t.Arg2, IsTaskReady(t))
 		}
 
 		// Добавляем задачи в менеджер
 		Manager.AddExpression(exprID, taskList)
 
 		// Обновляем статус выражения
-		UpdateExpressions()
+		apiUpdateExpressions()
 	}()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -286,7 +286,7 @@ func (h *AuthHandlers) GetExpressionWithAuthHandler(w http.ResponseWriter, r *ht
 	}
 
 	// Получаем ID выражения из URL
-	id := getExpressionIDFromURL(r.URL.Path)
+	id := GetExpressionIDFromURL(r.URL.Path)
 	if id == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)

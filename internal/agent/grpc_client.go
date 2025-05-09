@@ -102,10 +102,14 @@ func (c *GRPCClient) SubmitResult(result *models.TaskResult, expressionID string
 	}
 
 	// Отправляем результат
-	_, err := c.client.SubmitResult(ctx, pbResult)
+	resp, err := c.client.SubmitResult(ctx, pbResult)
 	if err != nil {
 		log.Printf("Ошибка отправки результата: %v", err)
 		return err
+	}
+	log.Printf("SubmitResultResponse от сервера: success=%v, message=%s", resp.Success, resp.Message)
+	if !resp.Success {
+		return fmt.Errorf("SubmitResult failed: %s", resp.Message)
 	}
 
 	return nil

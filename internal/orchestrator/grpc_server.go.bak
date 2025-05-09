@@ -118,14 +118,19 @@ func (s *CalculatorServer) GetTask(ctx context.Context, req *calculator.GetTaskR
 	log.Printf("=== ОТЛАДКА SERVER: Возвращаем задачу #%d агенту #%d", task.ID, req.AgentID)
 
 	// Преобразуем в protobuf формат
-	return &calculator.Task{
+	grpcTask := &calculator.Task{
 		ID:            int32(task.ID),
 		Arg1:          task.Arg1,
 		Arg2:          task.Arg2,
 		Operation:     task.Operation,
 		OperationTime: int32(task.OperationTime),
 		ExpressionID:  task.ExpressionID,
-	}, nil
+	}
+
+	log.Printf("=== ОТЛАДКА SERVER: Возвращаем задачу агенту #%d: ID=%d, %s %s %s", 
+		req.AgentID, grpcTask.ID, grpcTask.Arg1, grpcTask.Operation, grpcTask.Arg2)
+
+	return grpcTask, nil
 }
 
 // SubmitResult обрабатывает результат задачи от агента
@@ -201,7 +206,6 @@ func (s *CalculatorServer) SubmitResult(ctx context.Context, result *calculator.
 			tasksWithResults = append(tasksWithResults, taskWithResult{id: taskID, result: taskResult})
 			log.Printf("Задача #%d имеет результат %f", taskID, taskResult)
 		}
-		Manager.mu.Unlock()
 
 		// Выводим все задачи для отладки
 		log.Printf("Все задачи для выражения %s:", exprID)
@@ -214,6 +218,35 @@ func (s *CalculatorServer) SubmitResult(ctx context.Context, result *calculator.
 			return tasksWithResults[i].id > tasksWithResults[j].id
 		})
 
+				task, exists := Manager.Tasks[taskID]
+				if !exists {
+					log.Printf("  Задача #%d не найдена в Manager.Tasks", taskID)
+					continue
+				}
+
+				// Проверяем зависимости
+				if strings.HasPrefix(task.Arg1, "result") {
+					sourceTaskID, err := strconv.Atoi(strings.TrimPrefix(task.Arg1, "result"))
+					if err == nil {
+						usedAsInput[sourceTaskID] = true
+						log.Printf("  Задача #%d используется как входной аргумент в задаче #%d (Arg1)", sourceTaskID, taskID)
+					}
+				}
+
+				if strings.HasPrefix(task.Arg2, "result") {
+					sourceTaskID, err := strconv.Atoi(strings.TrimPrefix(task.Arg2, "result"))
+					if err == nil {
+						usedAsInput[sourceTaskID] = true
+						log.Printf("  Задача #%d используется как входной аргумент в задаче #%d (Arg2)", sourceTaskID, taskID)
+					}
+				}
+			}
+		}
+		Manager.mu.Unlock()
+
+		// Новый подход: создаем граф зависимостей в обратном порядке
+		// Теперь мы будем искать задачи, которые не используются в качестве аргументов для других задач
+		
 		// Создаем множество задач, чьи результаты используются в других задачах
 		usedAsInput := make(map[int]bool)
 		
@@ -226,8 +259,59 @@ func (s *CalculatorServer) SubmitResult(ctx context.Context, result *calculator.
 			
 			task, exists := Manager.Tasks[taskID]
 			if !exists {
-				// Возможно задача уже выполнена и удалена, но нам все равно нужно проверить
-				// архивные данные о задачах
+				continue
+			}
+			
+			// Проверяем Arg1
+			if strings.HasPrefix(task.Arg1, "result") {
+				sourceTaskID, err := strconv.Atoi(strings.TrimPrefix(task.Arg1, "result"))
+				if err == nil {
+					usedAsInput[sourceTaskID] = true
+					log.Printf("  Задача #%d используется как входной аргумент в задаче #%d (Arg1)", sourceTaskID, taskID)
+				}
+			}
+			
+			// Проверяем Arg2
+			if strings.HasPrefix(task.Arg2, "result") {
+				sourceTaskID, err := strconv.Atoi(strings.TrimPrefix(task.Arg2, "result"))
+				if err == nil {
+					usedAsInput[sourceTaskID] = true
+					log.Printf("  Задача #%d используется как входной аргумент в задаче #%d (Arg2)", sourceTaskID, taskID)
+				}
+			}
+		}
+		Manager.mu.Unlock()
+		
+		// Выводим задачи, которые используются как входные аргументы
+		log.Printf("Задачи, используемые как входные аргументы:")
+		for taskID := range usedAsInput {
+			log.Printf("  Задача #%d", taskID)
+		}
+		
+		// Теперь ищем задачи, которые не используются как входные аргументы
+		var rootCandidates []taskWithResult
+		for _, task := range tasksWithResults {
+			if !usedAsInput[task.id] {
+				rootCandidates = append(rootCandidates, task)
+				log.Printf("  Потенциальная корневая задача #%d с результатом %f для выражения %s", task.id, task.result, exprID)
+			}
+		}
+
+		// Новый подход: создаем граф зависимостей в обратном порядке
+		// Теперь мы будем искать задачи, которые не используются в качестве аргументов для других задач
+		
+		// Создаем множество задач, чьи результаты используются в других задачах
+		usedAsInput := make(map[int]bool)
+		
+		// Проходим по всем задачам и проверяем их аргументы
+		Manager.mu.Lock()
+		for taskID, expressionID := range Manager.TaskToExpr {
+			if expressionID != exprID {
+				continue
+			}
+			
+			task, exists := Manager.Tasks[taskID]
+			if !exists {
 				continue
 			}
 			

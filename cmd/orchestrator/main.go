@@ -81,6 +81,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("Ошибка создания базы данных: %v", err)
 	}
+	// Инициализируем глобальную БД для HTTP TaskHandler
+	orchestrator.DB = db
 	defer db.Close()
 
 	// Выполняем миграции базы данных
