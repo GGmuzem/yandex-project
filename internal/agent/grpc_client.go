@@ -44,51 +44,60 @@ func (c *GRPCClient) Close() error {
 
 // GetTask получает задачу от оркестратора
 func (gc *GRPCClient) GetTask() (models.Task, error) {
-	req := &calculator.GetTaskRequest{
-		AgentID: gc.agentID,
-	}
 	log.Printf("Агент #%d: Запрос задачи от сервера", gc.agentID)
-
-	// Увеличиваем таймаут для большей надежности
+	
+	// Создаем контекст с таймаутом
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	// Добавляем механизм повторных попыток при ошибке связи
+	
+	// Запрашиваем задачу с повторными попытками в случае ошибки
 	var resp *calculator.Task
 	var err error
+	
+	// Максимальное количество попыток
 	maxRetries := 3
-	for retries := 0; retries < maxRetries; retries++ {
-		resp, err = gc.client.GetTask(ctx, req)
+	
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// Проверяем, что клиент инициализирован
+		if gc.client == nil {
+			log.Printf("Агент #%d: Ошибка - GRPC-клиент не инициализирован", gc.agentID)
+			return models.Task{}, fmt.Errorf("GRPC-клиент не инициализирован")
+		}
+		
+		log.Printf("Агент #%d: Отправка GetTask запроса (попытка %d)", gc.agentID, attempt)
+		resp, err = gc.client.GetTask(ctx, &calculator.GetTaskRequest{
+			AgentID: int32(gc.agentID),
+		})
+		
 		if err == nil {
-			break
+			log.Printf("Агент #%d: Успешно получен ответ от сервера", gc.agentID)
+			break // Успешно получили ответ
 		}
-		log.Printf("Агент #%d: Ошибка при получении задачи (попытка %d/%d): %v", 
-			gc.agentID, retries+1, maxRetries, err)
-		if retries < maxRetries-1 {
-			time.Sleep(time.Duration(500*(retries+1)) * time.Millisecond) // Увеличиваем интервал между попытками
+		
+		log.Printf("Агент #%d: Ошибка при получении задачи: %v (попытка %d из %d)", 
+			gc.agentID, err, attempt, maxRetries)
+		
+		if attempt < maxRetries {
+			// Ждем перед следующей попыткой
+			backoff := time.Duration(attempt*500) * time.Millisecond
+			log.Printf("Агент #%d: Ожидание %v перед повторной попыткой", gc.agentID, backoff)
+			time.Sleep(backoff)
 		}
 	}
-
+	
 	if err != nil {
-		log.Printf("Агент #%d: Не удалось получить задачу после %d попыток: %v", gc.agentID, maxRetries, err)
-		return models.Task{}, err
+		return models.Task{}, fmt.Errorf("не удалось получить задачу: %w", err)
 	}
-
-	log.Printf("Агент #%d: Получен ответ от сервера: ID=%d, Arg1='%s', Arg2='%s', Operation='%s', ExpressionID='%s', OperationTime=%d",
+	
+	log.Printf("Агент #%d: Получен ответ от сервера: ID=%d, Arg1='%s', Arg2='%s', Operation='%s', ExpressionID='%s', OperationTime=%d", 
 		gc.agentID, resp.ID, resp.Arg1, resp.Arg2, resp.Operation, resp.ExpressionID, resp.OperationTime)
-
-	// Улучшенная проверка на пустой ответ от сервера - проверка всех полей
-	if resp.ID == 0 {
+	
+	// Проверяем, что задача не пустая
+	if resp.ID == 0 && resp.Operation == "" {
 		log.Printf("Агент #%d: Получен пустой ответ от сервера (нет готовых задач), запрошу задачу позже", gc.agentID)
 		return models.Task{}, nil
 	}
-
-	// Дополнительная проверка на валидность задачи
-	if resp.Arg1 == "" || resp.Arg2 == "" || resp.Operation == "" {
-		log.Printf("Агент #%d: Получена невалидная задача: пустые аргументы или операция", gc.agentID)
-		return models.Task{}, fmt.Errorf("невалидная задача: пустые аргументы или операция")
-	}
-
+	
 	// Преобразуем в нашу модель задачи
 	task := models.Task{
 		ID:            int(resp.ID),

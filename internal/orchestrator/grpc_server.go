@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/GGmuzem/yandex-project/internal/database"
 	"github.com/GGmuzem/yandex-project/pkg/calculator"
@@ -71,11 +72,21 @@ func StartGRPCServer(db database.Database, mutex, tasksMutex *sync.Mutex) error 
 func (s *CalculatorServer) GetTask(ctx context.Context, req *calculator.GetTaskRequest) (*calculator.Task, error) {
 	log.Printf("=== GRPC SERVER: Получен запрос GetTask от агента ID=%d", req.AgentID)
 
-	// Используем метод GetTask из менеджера задач
-	task, found := Manager.GetTask()
+	// Добавляем прямой доступ к менеджеру задач
+	Manager.mu.Lock()
+	defer Manager.mu.Unlock()
+
+	// Проверяем наличие готовых задач
+	log.Printf("=== GRPC SERVER: Количество задач в системе: %d, в очереди готовых: %d", 
+		len(Manager.Tasks), len(Manager.ReadyTasks))
+
+	// Обновляем список готовых задач перед выдачей
+	log.Printf("=== GRPC SERVER: Вызываем UpdateReadyTasksList() для обновления списка готовых задач")
+	Manager.UpdateReadyTasksList()
+	log.Printf("=== GRPC SERVER: После обновления в очереди готовых: %d", len(Manager.ReadyTasks))
 
 	// Если нет готовых задач, возвращаем пустую задачу
-	if !found {
+	if len(Manager.ReadyTasks) == 0 {
 		log.Printf("=== GRPC SERVER: Нет готовых задач для агента #%d", req.AgentID)
 		return &calculator.Task{
 			ID:            0,
@@ -87,8 +98,24 @@ func (s *CalculatorServer) GetTask(ctx context.Context, req *calculator.GetTaskR
 		}, nil
 	}
 
-	log.Printf("=== GRPC SERVER: Возвращаем задачу #%d агенту #%d: %s %s %s", 
-		task.ID, req.AgentID, task.Arg1, task.Operation, task.Arg2)
+	// Берём первую задачу из очереди
+	task := Manager.ReadyTasks[0]
+	log.Printf("=== GRPC SERVER: Выбрана задача #%d для выдачи агенту: %s %s %s", 
+		task.ID, task.Arg1, task.Operation, task.Arg2)
+	
+	// Удаляем её из очереди
+	if len(Manager.ReadyTasks) > 1 {
+		Manager.ReadyTasks = Manager.ReadyTasks[1:]
+	} else {
+		Manager.ReadyTasks = []models.Task{}
+	}
+
+	// Отмечаем задачу как обрабатываемую и сохраняем время начала обработки
+	Manager.ProcessingTasks[task.ID] = true
+	Manager.TaskProcessingStartTime[task.ID] = time.Now()
+
+	log.Printf("=== GRPC SERVER: Возвращаем задачу #%d агенту #%d: %s %s %s, ExprID=%s", 
+		task.ID, req.AgentID, task.Arg1, task.Operation, task.Arg2, task.ExpressionID)
 
 	// Преобразуем в protobuf формат
 	return &calculator.Task{
@@ -105,24 +132,24 @@ func (s *CalculatorServer) GetTask(ctx context.Context, req *calculator.GetTaskR
 func (s *CalculatorServer) SubmitResult(ctx context.Context, result *calculator.TaskResult) (*calculator.SubmitResultResponse, error) {
 	log.Printf("=== GRPC SERVER: Получен результат для задачи #%d: %f, выражение: %s", result.ID, result.Result, result.ExpressionID)
 
-	// Создаем объект TaskResult для передачи в менеджер задач
-	taskResult := models.TaskResult{
-		ID:     int(result.ID),
-		Result: result.Result,
-	}
-
-	// Добавляем результат в менеджер задач
-	success := Manager.AddResult(taskResult)
-	if !success {
-		log.Printf("=== GRPC SERVER: Ошибка при добавлении результата задачи #%d", result.ID)
-		return &calculator.SubmitResultResponse{
-			Success: false,
-			Message: "ошибка при обработке результата",
-		}, nil
-	}
-
+	// Прямое сохранение результата в менеджере задач
+	Manager.mu.Lock()
+	
+	// Сохраняем результат в памяти
+	Manager.Results[int(result.ID)] = result.Result
+	log.Printf("=== GRPC SERVER: Результат задачи #%d сохранен в памяти: %f", result.ID, result.Result)
+	
+	// Удаляем задачу из списка задач в обработке
+	delete(Manager.ProcessingTasks, int(result.ID))
+	delete(Manager.TaskProcessingStartTime, int(result.ID))
+	
+	// Обновляем список готовых задач
+	Manager.UpdateReadyTasksList()
+	
 	// Получаем ID выражения
 	exprID := result.ExpressionID
+	Manager.mu.Unlock()
+
 	if exprID == "" {
 		log.Printf("=== GRPC SERVER: Задача #%d не имеет связанного выражения", result.ID)
 		return &calculator.SubmitResultResponse{
@@ -141,7 +168,7 @@ func (s *CalculatorServer) SubmitResult(ctx context.Context, result *calculator.
 	// Обновляем статусы выражений
 	UpdateExpressions()
 
-	log.Printf("=== GRPC SERVER: Результат задачи #%d успешно обработан", result.ID)
+	log.Printf("=== GRPC SERVER: Результат задачи #%d успешно обработан, очередь готовых задач обновлена", result.ID)
 	
 	return &calculator.SubmitResultResponse{
 		Success: true,

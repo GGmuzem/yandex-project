@@ -282,7 +282,7 @@ func TaskHandler(w http.ResponseWriter, r *http.Request) {
 				apiUpdateExpressions()
 				
 				// Обновляем список готовых задач
-				Manager.updateReadyTasksList()
+				Manager.UpdateReadyTasksList()
 				
 				// Проверяем состояние менеджера после обновления
 				log.Printf("TaskHandler POST: Всего задач в системе: %d", len(Manager.Tasks))
@@ -446,7 +446,7 @@ func isTaskInQueue(task models.Task, queue []models.Task) bool {
 
 func apiUpdateExpressions() {
 	log.Println("apiUpdateExpressions: обновление статусов выражений")
-	Manager.updateReadyTasksList()
+	Manager.UpdateReadyTasksList()
 	// Вызываем глобальную функцию обновления статусов выражений
 	UpdateExpressions()
 }
@@ -486,4 +486,4 @@ func processTask(taskId int, result float64) error {
 	return nil
 }
 
-// Функция updateReadyTasks удалена, теперь используется метод Manager.updateReadyTasksList() из manager.go
+// Функция updateReadyTasks удалена, теперь используется метод Manager.UpdateReadyTasksList() из manager.go
