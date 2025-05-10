@@ -1,14 +1,18 @@
 package orchestrator
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/GGmuzem/yandex-project/pkg/models"
+	"github.com/gorilla/mux"
 )
 
 // Статусы задач
@@ -19,40 +23,119 @@ const (
 	TaskStatusCompleted  = 3 // Выполнена
 )
 
+// Глобальные переменные для поддержки совместимости с текущей реализацией
 var (
-	expressions     = make(map[string]*models.Expression)
-	tasks           = make(map[int]*models.Task)
-	results         = make(map[int]float64)
-	readyTasks      = []models.Task{}
-	processingTasks = make(map[int]bool) // Карта для отслеживания задач, которые сейчас обрабатываются
-	taskToExpr      = make(map[int]string)
-	mu              sync.Mutex
-	taskCounter     int
-	exprCounter     int
+	expressions = make(map[string]*models.Expression) // Выражения
+	exprCounter = 0                                    // Счетчик выражений
+	taskCounter = 0                                    // Счетчик задач
+
+	tasks          = make(map[int]*models.Task) // Все задачи
+	readyTasks     []models.Task                // Задачи, готовые к выполнению
+	processingTasks = make(map[int]bool)         // Задачи в процессе выполнения
+	results        = make(map[int]float64)       // Результаты выполненных задач
+
+	// Сопоставление задач и выражений
+	taskToExpr = make(map[int]string) // Соответствие задача -> выражение
+	exprToTasks = make(map[string][]int) // Соответствие выражение -> задачи
+
+	// Зависимости между задачами
+	dependsOn = make(map[string][]int) // Карта зависимостей: result1 -> [задача 2, задача 3]
+
+	// Менеджер базы данных
+	dbManager *DBManager
+
+	mu sync.Mutex // Мьютекс для защиты от гонок
 )
 
+// CalculateHandler обрабатывает запросы на вычисление выражений
 func CalculateHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	log.Println("Получен запрос на вычисление")
+	
+	w.Header().Set("Content-Type", "application/json")
+	
+	// Получаем ID пользователя из контекста (устанавливается в JWT middleware)
+	userID, ok := r.Context().Value("user_id").(int)
+	if !ok {
+		log.Println("Не удалось получить ID пользователя из контекста")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Необходима авторизация"})
 		return
 	}
-
+	
+	// Декодируем JSON из тела запроса
 	var input struct {
 		Expression string `json:"expression"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil || input.Expression == "" {
-		http.Error(w, "Invalid data", http.StatusUnprocessableEntity)
+
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Некорректный JSON"})
 		return
 	}
 
-	exprID := "expr id:" + strconv.Itoa(exprCounter)
-	exprCounter++
+	log.Printf("Получено выражение: %s от пользователя ID: %d", input.Expression, userID)
+
+	// Генерируем уникальный ID для выражения
+	exprID := "expr" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	
+	// Очищаем все результаты предыдущих вычислений, чтобы не мешали новому
 	mu.Lock()
-	expressions[exprID] = &models.Expression{ID: exprID, Status: "pending"}
+	// Очищаем только карты задач, но не трогаем выражения в памяти
+	tasks = make(map[int]*models.Task)
+	readyTasks = []models.Task{}
+	processingTasks = make(map[int]bool)
+	dependsOn = make(map[string][]int)
+	taskToExpr = make(map[int]string)
+	results = make(map[int]float64)
+	// Важно: сбрасываем счетчик задач, чтобы ID задач и названия результатов совпадали
+	taskCounter = 0
 	mu.Unlock()
 
+	// Создаем объект выражения с привязкой к пользователю
+	expression := models.Expression{
+		ID:         exprID,
+		Expression: input.Expression,
+		Status:     "pending",
+		UserID:     userID,
+		CreatedAt:  time.Now().Format(time.RFC3339),
+	}
+
+	// Устанавливаем CORS заголовки для корректной работы в браузере
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+	// Сохраняем выражение в БД
+	if err := dbManager.SaveExpression(expression); err != nil {
+		log.Printf("Ошибка при сохранении выражения в БД: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Ошибка при сохранении выражения"})
+		return
+	}
+
+	// Также сохраняем выражение в памяти для текущей сессии
+
+	mu.Lock()
+	expressions[exprID] = &expression
+	mu.Unlock()
+
+	// Отправляем ответ с ID выражения для дальнейшего отслеживания
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	// Используем MarshalIndent для форматирования JSON, чтобы убедиться в его чистоте
+	response := map[string]interface{}{
+		"id": exprID,
+		"status": "pending",
+		"expression": input.Expression,
+	}
+	
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("Ошибка при отправке JSON: %v", err)
+	}
+
+	// Запускаем обработку выражения в отдельной горутине
 	go func() {
-		log.Printf("Парсинг выражения: %s", input.Expression)
+		log.Printf("Парсинг выражения: %s для пользователя ID: %d", input.Expression, userID)
 		taskList := ParseExpression(input.Expression)
 		mu.Lock()
 		log.Printf("Создание задач для выражения %s. Всего задач: %d", exprID, len(taskList))
@@ -118,7 +201,7 @@ func ListExpressionsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mu.Lock()
-	exprList := []models.Expression{}
+	exprList := make([]models.Expression, 0, len(expressions))
 	for _, expr := range expressions {
 		exprList = append(exprList, *expr)
 	}
@@ -130,76 +213,129 @@ func ListExpressionsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func GetExpressionHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	// Устанавливаем CORS заголовки для корректной обработки в браузере
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+	// Обрабатываем OPTIONS запросы для CORS
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	id := strings.TrimPrefix(r.URL.Path, "/api/v1/expressions/")
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Метод не разрешен"})
+		return
+	}
+
+	// Получаем ID выражения из переменных URL
+	vars := mux.Vars(r)
+	id := vars["id"]
+
+	log.Printf("Запрос на получение выражения с ID: %s", id)
+
+	// Блокируем доступ к общей карте
 	mu.Lock()
 	expr, exists := expressions[id]
 	mu.Unlock()
 
 	if !exists {
-		http.Error(w, "Expression not found", http.StatusNotFound)
+		log.Printf("Выражение с ID %s не найдено", id)
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Выражение не найдено"})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	log.Printf("Найдено выражение %s, статус: %s, результат: %f", id, expr.Status, expr.Result)
+
+	// Возвращаем данные о выражении в JSON формате
+	// Используем json.Marshal для чистого JSON без дополнительных символов
+	responseJSON, err := json.Marshal(*expr)
+	if err != nil {
+		log.Printf("Ошибка при формировании JSON: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":"Ошибка сервера"}`))  
+		return
+	}
+	
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]models.Expression{"expression": *expr})
+	w.Write(responseJSON)
 }
 
 func TaskHandler(w http.ResponseWriter, r *http.Request) {
+	log.Printf("Получен запрос на %s %s от агента", r.Method, r.URL.Path)
+
+	methodOk := r.Method == http.MethodGet || r.Method == http.MethodPost
+	if !methodOk {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Обработка запроса на получение задачи
 	if r.Method == http.MethodGet {
 		mu.Lock()
-		if len(readyTasks) == 0 {
-			mu.Unlock()
-			w.WriteHeader(http.StatusNotFound)
-			return
+		var task models.Task
+		var taskFound bool
+
+		if len(readyTasks) > 0 {
+			// Берем первую готовую задачу из очереди
+			task = readyTasks[0]
+			readyTasks = readyTasks[1:]
+
+			// Помечаем задачу как "в обработке"
+			processingTasks[task.ID] = true
+			
+			// Добавляем информацию о выражении, к которому относится задача
+			task.ExpressionID = taskToExpr[task.ID]
+			task.IsFinished = false
+			task.IsWrong = false
+
+			taskFound = true
+			log.Printf("TaskHandler: агенту отправлена задача #%d: %s %s %s (выражение %s)",
+				task.ID, task.Arg1, task.Operation, task.Arg2, task.ExpressionID)
+		} else {
+			taskFound = false
+			log.Printf("TaskHandler: нет доступных задач для агента")
 		}
-
-		// Ищем задачу, которая еще не в обработке
-		taskIndex := -1
-		for i, task := range readyTasks {
-			if !processingTasks[task.ID] {
-				taskIndex = i
-				break
-			}
-		}
-
-		// Если все задачи уже в обработке, возвращаем 404
-		if taskIndex == -1 {
-			mu.Unlock()
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-
-		// Получаем задачу и удаляем ее из очереди
-		task := readyTasks[taskIndex]
-
-		// Если задача находится в середине очереди, перемещаем последнюю задачу на ее место
-		// и усекаем очередь
-		if taskIndex < len(readyTasks)-1 {
-			readyTasks[taskIndex] = readyTasks[len(readyTasks)-1]
-		}
-		readyTasks = readyTasks[:len(readyTasks)-1]
-
-		// Помечаем задачу как "в обработке"
-		processingTasks[task.ID] = true
 
 		mu.Unlock()
 
-		log.Printf("Отправляем задачу #%d агенту: %s %s %s",
-			task.ID, task.Arg1, task.Operation, task.Arg2)
-
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]models.Task{"task": task})
+
+		if taskFound {
+			response := models.TaskResponse{Task: task}
+			json.NewEncoder(w).Encode(response)
+		} else {
+			response := models.TaskResponse{Error: "No tasks available"}
+			w.WriteHeader(http.StatusNoContent) // 204 No Content
+			json.NewEncoder(w).Encode(response)
+		}
+
+		if taskFound {
+			log.Printf("TaskHandler: отправлен ответ агенту для задачи #%d: %s %s %s",
+				task.ID, task.Arg1, task.Operation, task.Arg2)
+		}
 		return
 	}
 
 	if r.Method == http.MethodPost {
+		// Получаем все тело запроса для логирования
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			log.Printf("Ошибка при чтении тела запроса: %v", err)
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		
+		log.Printf("Получено тело запроса от агента: %s", string(body))
+		
+		// Восстанавливаем body для дальнейшего декодирования
+		r.Body = io.NopCloser(bytes.NewBuffer(body))
+		
+		// Используем структуру, совместимую с форматом, который отправляет агент
 		var result models.TaskResult
 		if err := json.NewDecoder(r.Body).Decode(&result); err != nil {
 			log.Printf("TaskHandler: ошибка декодирования тела запроса: %v", err)
@@ -215,22 +351,34 @@ func TaskHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("TaskHandler: начало обработки результата для задачи #%d: %f", result.ID, result.Result)
 
 		// Снимаем отметку "в обработке" с задачи
+		log.Printf("TaskHandler: снимаем отметку 'в обработке' с задачи #%d", result.ID)
 		delete(processingTasks, result.ID)
 
 		// Проверяем, существует ли еще задача
 		task, exists := tasks[result.ID]
 		if !exists {
 			// Проверяем, может быть результат для этой задачи уже был получен
-			if _, resultExists := results[result.ID]; resultExists {
+			// Проверяем в БД
+			savedResult, completed, err := dbManager.GetTaskResult(result.ID)
+			if err != nil {
+				log.Printf("Ошибка при проверке результата задачи в БД: %v", err) 
+			} else if completed {
 				log.Printf("TaskHandler: результат для задачи #%d уже был получен ранее. Значение: %f. Текущий результат: %f. Игнорируем дублирующий результат.",
-					result.ID, results[result.ID], result.Result)
+					result.ID, savedResult, result.Result)
 				w.WriteHeader(http.StatusOK)
 				return
 			}
 
 			log.Printf("TaskHandler: задача #%d не найдена в списке активных задач", result.ID)
-			// Сохраняем результат даже для неактивной задачи
+			
+			// Сохраняем результат в памяти и БД
 			results[result.ID] = result.Result
+			
+			// Сохраняем в БД
+			if err := dbManager.UpdateTaskResult(result.ID, result.Result); err != nil {
+				log.Printf("Ошибка при сохранении результата задачи в БД: %v", err)
+			}
+			
 			log.Printf("TaskHandler: результат для неактивной задачи #%d сохранен: %f", result.ID, result.Result)
 
 			// Получаем ID выражения, если оно есть
@@ -304,6 +452,11 @@ func TaskHandler(w http.ResponseWriter, r *http.Request) {
 // Функция для рекурсивной обработки зависимостей задач
 func processTaskDependencies(taskID int, taskResult float64) {
 	log.Printf("Обработка зависимостей для задачи #%d с результатом %f (resultStr=result%d)", taskID, taskResult, taskID)
+
+	// Сохраняем результат в БД
+	if err := dbManager.UpdateTaskResult(taskID, taskResult); err != nil {
+		log.Printf("Ошибка при обновлении результата задачи в БД: %v", err)
+	}
 
 	resultStr := "result" + strconv.Itoa(taskID)
 	dependentTasks := make(map[int]*models.Task)
@@ -521,6 +674,13 @@ func updateExpressions() {
 					exprID, lastResult, lastTaskID)
 				expr.Status = "completed"
 				expr.Result = lastResult
+				
+				// Обновляем статус и результат в базе данных
+				if err := dbManager.UpdateExpressionStatus(exprID, "completed", lastResult); err != nil {
+					log.Printf("Ошибка при обновлении статуса выражения %s в БД: %v", exprID, err)
+				} else {
+					log.Printf("Статус и результат выражения %s успешно обновлены в БД", exprID)
+				}
 			} else {
 				log.Printf("updateExpressions: не найден результат для задачи #%d выражения %s", lastTaskID, exprID)
 
@@ -561,8 +721,15 @@ func processTask(taskId int, result float64) error {
 		log.Printf("Задача #%d найдена в системе", taskId)
 	}
 
-	// Сохраняем результат
+	// Сохраняем результат в памяти
 	results[taskId] = result
+
+	// Сохраняем результат в БД
+	if err := dbManager.UpdateTaskResult(taskId, result); err != nil {
+		log.Printf("Ошибка при сохранении результата задачи #%d в БД: %v", taskId, err)
+	} else {
+		log.Printf("Результат задачи #%d успешно сохранен в БД", taskId)
+	}
 
 	// Удаляем задачу из списка обрабатываемых
 	delete(processingTasks, taskId)
@@ -605,8 +772,14 @@ func updateReadyTasks() {
 			if strings.HasPrefix(task.Arg1, "result") {
 				resultID := strings.TrimPrefix(task.Arg1, "result")
 				if id, err := strconv.Atoi(resultID); err == nil {
-					if result, exists := results[id]; exists {
-						log.Printf("updateReadyTasks: обновляем arg1 задачи #%d результатом задачи #%d: %f", taskID, id, result)
+					// Сначала проверяем в БД
+					dbResult, completed, err := dbManager.GetTaskResult(id)
+					if err == nil && completed {
+						log.Printf("updateReadyTasks: обновляем arg1 задачи #%d результатом задачи #%d из БД: %f", taskID, id, dbResult)
+						task.Arg1 = strconv.FormatFloat(dbResult, 'f', -1, 64)
+					} else if result, exists := results[id]; exists {
+						// Если нет в БД, проверяем в памяти
+						log.Printf("updateReadyTasks: обновляем arg1 задачи #%d результатом задачи #%d из памяти: %f", taskID, id, result)
 						task.Arg1 = strconv.FormatFloat(result, 'f', -1, 64)
 					}
 				}
@@ -615,7 +788,14 @@ func updateReadyTasks() {
 			if strings.HasPrefix(task.Arg2, "result") {
 				resultID := strings.TrimPrefix(task.Arg2, "result")
 				if id, err := strconv.Atoi(resultID); err == nil {
-					if result, exists := results[id]; exists {
+					// Сначала проверяем в БД
+					dbResult, completed, err := dbManager.GetTaskResult(id)
+					if err == nil && completed {
+						log.Printf("updateReadyTasks: обновляем arg2 задачи #%d результатом задачи #%d из БД: %f", taskID, id, dbResult)
+						task.Arg2 = strconv.FormatFloat(dbResult, 'f', -1, 64)
+					} else if result, exists := results[id]; exists {
+						// Если нет в БД, проверяем в памяти
+						log.Printf("updateReadyTasks: обновляем arg2 задачи #%d результатом задачи #%d из памяти: %f", taskID, id, result)
 						log.Printf("updateReadyTasks: обновляем arg2 задачи #%d результатом задачи #%d: %f", taskID, id, result)
 						task.Arg2 = strconv.FormatFloat(result, 'f', -1, 64)
 					}

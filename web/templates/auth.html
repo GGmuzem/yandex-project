@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Авторизация - Распределённый вычислитель выражений</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>Распределённый вычислитель выражений</h1>
+            <nav>
+                <ul>
+                    <li><a href="/">Главная</a></li>
+                    <li><a href="/history">История</a></li>
+                    <li><a href="/help">Справка</a></li>
+                </ul>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        <div class="auth-container">
+            <div class="auth-tabs">
+                <button class="auth-tab active" data-tab="login">Вход</button>
+                <button class="auth-tab" data-tab="register">Регистрация</button>
+            </div>
+            
+            <div class="auth-form-container">
+                <div id="login-tab" class="auth-tab-content active">
+                    <h2>Вход в систему</h2>
+                    <form id="login-form" class="auth-form">
+                        <div class="form-group">
+                            <label for="login-username">Логин:</label>
+                            <input type="text" id="login-username" name="username" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="login-password">Пароль:</label>
+                            <input type="password" id="login-password" name="password" required>
+                        </div>
+                        <button type="submit" class="btn">Войти</button>
+                    </form>
+                </div>
+                
+                <div id="register-tab" class="auth-tab-content">
+                    <h2>Регистрация нового пользователя</h2>
+                    <form id="register-form" class="auth-form">
+                        <div class="form-group">
+                            <label for="register-username">Логин:</label>
+                            <input type="text" id="register-username" name="username" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="register-password">Пароль:</label>
+                            <input type="password" id="register-password" name="password" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="register-password-confirm">Подтверждение пароля:</label>
+                            <input type="password" id="register-password-confirm" name="password-confirm" required>
+                        </div>
+                        <button type="submit" class="btn">Зарегистрироваться</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>&copy; 2025 Распределённый вычислитель выражений</p>
+        </div>
+    </footer>
+
+    <script src="/static/js/common.js"></script>
+    <script src="/static/js/auth.js"></script>
+</body>
+</html>

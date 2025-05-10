@@ -2,16 +2,15 @@ package main
 
 import (
     "log"
-    "net/http"
     "github.com/GGmuzem/yandex-project/internal/orchestrator"
 )
 
 func main() {
-    http.HandleFunc("/api/v1/calculate", orchestrator.CalculateHandler)
-    http.HandleFunc("/api/v1/expressions", orchestrator.ListExpressionsHandler)
-    http.HandleFunc("/api/v1/expressions/", orchestrator.GetExpressionHandler)
-    http.HandleFunc("/internal/task", orchestrator.TaskHandler)
-
-    log.Println("Orchestrator starting on :8080")
-    log.Fatal(http.ListenAndServe(":8080", nil))
+    // Инициализируем глобальный экземпляр менеджера выражений
+    log.Println("Инициализация менеджера выражений")
+    
+    // Запускаем HTTP-сервер с обработкой маршрутов через gorilla/mux
+    log.Println("Запуск HTTP-сервера на порту :8081")
+    // Вызываем функцию без параметров, так как порт теперь задаётся внутри функции
+    orchestrator.StartServer()
 }

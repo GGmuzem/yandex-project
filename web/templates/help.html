@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Справка - Распределённый вычислитель выражений</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>Распределённый вычислитель выражений</h1>
+            <nav>
+                <ul>
+                    <li><a href="/">Главная</a></li>
+                    <li><a href="/history">История</a></li>
+                    <li><a href="/help" class="active">Справка</a></li>
+                </ul>
+            </nav>
+            <div id="user-info">
+                <span id="user-greeting">Привет, <span id="user-name"></span>!</span>
+                <button id="logout-btn" class="btn btn-small">Выйти</button>
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        <section class="help-section">
+            <h2>Справка по использованию калькулятора</h2>
+            
+            <div class="help-tabs">
+                <button class="help-tab active" data-tab="overview">Обзор</button>
+                <button class="help-tab" data-tab="expressions">Выражения</button>
+                <button class="help-tab" data-tab="functions">Функции</button>
+                <button class="help-tab" data-tab="examples">Примеры</button>
+                <button class="help-tab" data-tab="faq">FAQ</button>
+            </div>
+            
+            <div class="help-content">
+                <div id="overview" class="help-tab-content active">
+                    <h3>Обзор системы</h3>
+                    <p>Распределённый вычислитель выражений - это система, позволяющая производить вычисления арифметических выражений с использованием распределённых вычислительных ресурсов.</p>
+                    <p>Особенности системы:</p>
+                    <ul>
+                        <li>Распределённые вычисления на нескольких агентах</li>
+                        <li>Сохранение истории вычислений</li>
+                        <li>Возможность отслеживать статус и промежуточные результаты</li>
+                        <li>Надёжное хранение данных в базе данных SQLite</li>
+                    </ul>
+                </div>
+                
+                <div id="expressions" class="help-tab-content">
+                    <h3>Поддерживаемые выражения</h3>
+                    <p>Система поддерживает следующие арифметические операции:</p>
+                    <table class="help-table">
+                        <tr>
+                            <th>Операция</th>
+                            <th>Символ</th>
+                            <th>Пример</th>
+                        </tr>
+                        <tr>
+                            <td>Сложение</td>
+                            <td>+</td>
+                            <td>2 + 3</td>
+                        </tr>
+                        <tr>
+                            <td>Вычитание</td>
+                            <td>-</td>
+                            <td>5 - 2</td>
+                        </tr>
+                        <tr>
+                            <td>Умножение</td>
+                            <td>*</td>
+                            <td>4 * 6</td>
+                        </tr>
+                        <tr>
+                            <td>Деление</td>
+                            <td>/</td>
+                            <td>8 / 2</td>
+                        </tr>
+                    </table>
+                    <p>Система учитывает приоритет операций: умножение и деление выполняются перед сложением и вычитанием.</p>
+                    <p>Вы также можете использовать скобки для группировки операций: (2 + 3) * 4</p>
+                </div>
+                
+                <div id="functions" class="help-tab-content">
+                    <h3>Дополнительные функции</h3>
+                    <p>В текущей версии доступны следующие дополнительные функции:</p>
+                    <ul>
+                        <li>История вычислений - доступна на странице "История"</li>
+                        <li>Детальная информация о выражении - доступна при клике на выражение в истории</li>
+                        <li>Пересчёт выражения - возможность повторно вычислить выражение</li>
+                    </ul>
+                </div>
+                
+                <div id="examples" class="help-tab-content">
+                    <h3>Примеры выражений</h3>
+                    <table class="help-table">
+                        <tr>
+                            <th>Выражение</th>
+                            <th>Результат</th>
+                            <th>Комментарий</th>
+                        </tr>
+                        <tr>
+                            <td>2 + 2</td>
+                            <td>4</td>
+                            <td>Простое сложение</td>
+                        </tr>
+                        <tr>
+                            <td>2 + 2 * 2</td>
+                            <td>6</td>
+                            <td>Умножение имеет приоритет над сложением</td>
+                        </tr>
+                        <tr>
+                            <td>(2 + 2) * 2</td>
+                            <td>8</td>
+                            <td>Скобки меняют порядок вычислений</td>
+                        </tr>
+                        <tr>
+                            <td>2 + 2 + 2 + 2 + 2</td>
+                            <td>10</td>
+                            <td>Цепочка сложений</td>
+                        </tr>
+                        <tr>
+                            <td>10 / 2 / 2</td>
+                            <td>2.5</td>
+                            <td>Деление выполняется слева направо</td>
+                        </tr>
+                    </table>
+                </div>
+                
+                <div id="faq" class="help-tab-content">
+                    <h3>Часто задаваемые вопросы</h3>
+                    <div class="faq-item">
+                        <h4>Что такое распределённые вычисления?</h4>
+                        <p>Распределённые вычисления - это метод обработки данных, при котором задачи разбиваются на подзадачи и распределяются между несколькими вычислительными узлами (агентами), работающими параллельно.</p>
+                    </div>
+                    <div class="faq-item">
+                        <h4>Как система обрабатывает сложные выражения?</h4>
+                        <p>Система разбивает сложные выражения на простые операции, которые затем распределяются между агентами для параллельного вычисления.</p>
+                    </div>
+                    <div class="faq-item">
+                        <h4>Что делать, если вычисление зависло?</h4>
+                        <p>Если вычисление зависло более чем на 1 минуту, попробуйте обновить страницу или нажмите кнопку "Пересчитать" на странице деталей выражения.</p>
+                    </div>
+                    <div class="faq-item">
+                        <h4>Сохраняются ли мои вычисления после выхода из системы?</h4>
+                        <p>Да, все вычисления сохраняются в базе данных и будут доступны при следующем входе в систему.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>&copy; 2025 Распределённый вычислитель выражений</p>
+        </div>
+    </footer>
+
+    <script src="/static/js/common.js"></script>
+    <script src="/static/js/help.js"></script>
+</body>
+</html>

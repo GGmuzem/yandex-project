@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>История вычислений - Распределённый вычислитель выражений</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>Распределённый вычислитель выражений</h1>
+            <nav>
+                <ul>
+                    <li><a href="/">Главная</a></li>
+                    <li><a href="/history" class="active">История</a></li>
+                    <li><a href="/help">Справка</a></li>
+                </ul>
+            </nav>
+            <div id="user-info">
+                <span id="user-greeting">Привет, <span id="user-name"></span>!</span>
+                <button id="logout-btn" class="btn btn-small">Выйти</button>
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        <section class="history-section">
+            <h2>История вычислений</h2>
+            
+            <div class="history-filter">
+                <div class="form-group">
+                    <label for="date-from">От:</label>
+                    <input type="date" id="date-from">
+                </div>
+                <div class="form-group">
+                    <label for="date-to">До:</label>
+                    <input type="date" id="date-to">
+                </div>
+                <div class="form-group">
+                    <label for="status-filter">Статус:</label>
+                    <select id="status-filter">
+                        <option value="all">Все</option>
+                        <option value="completed">Завершенные</option>
+                        <option value="pending">В процессе</option>
+                        <option value="error">С ошибками</option>
+                    </select>
+                </div>
+                <button id="apply-filter" class="btn">Применить</button>
+            </div>
+            
+            <table id="history-table" class="data-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Выражение</th>
+                        <th>Дата</th>
+                        <th>Статус</th>
+                        <th>Результат</th>
+                        <th>Детали</th>
+                    </tr>
+                </thead>
+                <tbody id="history-body">
+                    <!-- Данные будут загружены через JavaScript -->
+                </tbody>
+            </table>
+            
+            <div class="pagination">
+                <button id="prev-page" class="btn btn-small">Предыдущая</button>
+                <span id="page-info">Страница 1 из 1</span>
+                <button id="next-page" class="btn btn-small">Следующая</button>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>&copy; 2025 Распределённый вычислитель выражений</p>
+        </div>
+    </footer>
+
+    <script src="/static/js/common.js"></script>
+    <script src="/static/js/history.js"></script>
+</body>
+</html>

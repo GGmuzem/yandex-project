@@ -1,0 +1,40 @@
+services:
+  # Сервис оркестратора
+  orchestrator:
+    build:
+      context: .
+      target: orchestrator
+    container_name: yandex-orchestrator
+    volumes:
+      # Монтируем директорию для персистентности SQLite базы данных
+      - sqlite-data:/root/data
+    ports:
+      - "8081:8081"
+    networks:
+      - yandex-network
+    restart: unless-stopped
+
+  # Сервис агента
+  agent:
+    build:
+      context: .
+      target: agent
+    depends_on:
+      - orchestrator
+    environment:
+      # Настройки подключения к оркестратору
+      COMPUTING_POWER: 5
+      ORCHESTRATOR_URL: http://orchestrator:8081
+    networks:
+      - yandex-network
+    restart: unless-stopped
+    # Масштабируем агентов при необходимости
+    deploy:
+      replicas: 1
+
+networks:
+  yandex-network:
+    driver: bridge
+
+volumes:
+  sqlite-data: # Том для хранения базы данных SQLite

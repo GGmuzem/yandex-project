@@ -2,6 +2,8 @@
 
 Проект представляет собой распределённую систему для вычисления сложных арифметических выражений. Система эффективно разбивает выражения на атомарные операции, распределяет их между вычислительными агентами и собирает результаты, соблюдая все зависимости между операциями.
 
+Система также включает в себя веб-интерфейс с аутентификацией пользователей для удобного использования и отслеживания истории вычислений.
+
 ## Возможности системы
 
 - Поддержка сложных математических выражений с множественными уровнями вложенности
@@ -31,14 +33,45 @@
    - Поддерживает параллельное выполнение операций
    - Масштабируется через настройку количества воркеров
 
-![Схема работы системы](https://mermaid.ink/img/pako:eNp1kU1vwjAMhv9KlNOQhnTYWHTiY4cfMKnACTiUxm2t5qOKU7GN8d-X0nYCiR0ivXn9xI4dXISSDKTQ7GyFpKrY6sIwJl6VRW20IyacZ0sI5tg7R9jZvD3Jqo1vC22qkiuFhGQ0deLg5FGRgz0GDNpLZxbEeBTewPAPiPSO_kTnb3gEIvPYGa2REO6EVQU5E80-Mc3CJDz-fA4xTFRN_G_Qd_yuxd42bnWjveTmO9Cd0DpndIHUDTLXdIFNpJWXtmsbuSqRx7vD9Tbd8QN4pOtzr6-kp1sH1cDnxiKbRDj2uKsyVjhdYWTDIdL6KPLBKNVujfTDvtMaFGSYKEH4OC_ZW3qnIPtm9CgluG3fNaQQV2Uo7Xu47voDTXiLjA?type=png)
 
 ## Требования
 
-- Go 1.16 или выше
+- Go 1.23 или выше
 - Доступ к localhost для HTTP-запросов
 
 ## Установка и запуск
+
+### Через Docker (рекомендуется)
+
+Для быстрого развертывания приложения можно использовать Docker:
+
+1. **Сборка и запуск контейнеров**:
+   ```bash
+   docker-compose up -d
+   ```
+
+2. **Просмотр логов**:
+   ```bash
+   docker-compose logs -f
+   ```
+
+3. **Остановка контейнеров**:
+   ```bash
+   docker-compose down
+   ```
+
+4. **Настройка количества агентов**:
+
+   Измените значение `replicas` в файле `docker-compose.yml`:
+   ```yaml
+   agent:
+     deploy:
+       replicas: 3  # Измените на нужное количество
+   ```
+
+После запуска приложение будет доступно по адресу: http://localhost:8081
+
+### Локальный запуск 
 
 1. Клонировать репозиторий:
    ```bash
@@ -51,18 +84,18 @@
    go run ./cmd/orchestrator/main.go
    ```
    
-   Оркестратор запустится на порту 8080 по умолчанию.
+   Оркестратор запустится на порту 8081 по умолчанию.
 
 3. **Запуск агента** (в новом терминале):
    ```bash
    # Для Linux/Mac:
-   COMPUTING_POWER=3 go run ./cmd/agent/main.go
+   COMPUTING_POWER=4 go run ./cmd/agent/main.go
    
    # Для Windows (PowerShell):
-   $env:COMPUTING_POWER=3; go run ./cmd/agent/main.go
+   $env:COMPUTING_POWER=4; go run ./cmd/agent/main.go
    
    # Для Windows (CMD):
-   set COMPUTING_POWER=3
+   set COMPUTING_POWER=4
    go run ./cmd/agent/main.go
    ```
 

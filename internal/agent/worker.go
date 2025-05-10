@@ -19,20 +19,29 @@ func StartWorker() {
 	// Получаем количество вычислительных мощностей из переменной окружения
 	power, err := strconv.Atoi(os.Getenv("COMPUTING_POWER"))
 	if err != nil || power <= 0 {
-		power = 10 // По умолчанию 1 воркер
+		power = 10 // По умолчанию 10 воркеров
 		log.Printf("COMPUTING_POWER не указано или некорректно, используем значение по умолчанию: %d", power)
+	}
+
+	// Проверяем, что указан URL оркестратора
+	orchestratorURL := os.Getenv("ORCHESTRATOR_URL")
+	if orchestratorURL == "" {
+		orchestratorURL = "http://localhost:8081" // По умолчанию локальный адрес
+		log.Printf("ORCHESTRATOR_URL не указан, используем значение по умолчанию: %s", orchestratorURL)
+	} else {
+		log.Printf("Подключение к оркестратору по адресу: %s", orchestratorURL)
 	}
 
 	log.Printf("Запуск агента с %d воркерами", power)
 
 	// Запускаем необходимое количество горутин
 	for i := 0; i < power; i++ {
-		go workerLoop(i)
+		go workerLoop(i, orchestratorURL)
 	}
 }
 
 // workerLoop непрерывно опрашивает оркестратор на наличие новых задач и выполняет их
-func workerLoop(id int) {
+func workerLoop(id int, orchestratorURL string) {
 	client := &http.Client{Timeout: 10 * time.Second}
 
 	// Интервал между запросами при отсутствии задач
@@ -44,40 +53,43 @@ func workerLoop(id int) {
 
 	for {
 		// Запрашиваем задачу от оркестратора
-		req, err := http.NewRequest("GET", "http://localhost:8080/internal/task", nil)
+		log.Printf("Воркер %d: запрос задачи у оркестратора...", id)
+		resp, err := client.Get(orchestratorURL + "/internal/task")
 		if err != nil {
-			log.Printf("Воркер %d: ошибка создания запроса: %v", id, err)
+			log.Printf("Воркер %d: ошибка получения задачи: %v", id, err)
 			time.Sleep(retryInterval)
 			continue
 		}
 
-		resp, err := client.Do(req)
-
-		// Обрабатываем ошибки и случай отсутствия задач
+		// Для отладки - читаем и логируем весь ответ
+		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			log.Printf("Воркер %d: ошибка соединения с оркестратором: %v", id, err)
+			log.Printf("Воркер %d: ошибка при чтении ответа: %v", id, err)
+			resp.Body.Close()
 			time.Sleep(retryInterval)
 			continue
 		}
+		log.Printf("Воркер %d: получен ответ от оркестратора: %s (код %d)", id, string(body), resp.StatusCode)
 
-		if resp.StatusCode == http.StatusNotFound {
-			// Если нет задач, повторяем через небольшой интервал
+		// Восстанавливаем body для декодирования
+		resp.Body = io.NopCloser(bytes.NewBuffer(body))
+
+		if resp.StatusCode == http.StatusNoContent {
+			log.Printf("Воркер %d: нет доступных задач, ожидание...", id)
 			resp.Body.Close()
 			time.Sleep(retryInterval)
 			continue
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			log.Printf("Воркер %d: неожиданный статус от оркестратора: %d", id, resp.StatusCode)
+			log.Printf("Воркер %d: получен неожиданный ответ от оркестратора: %d", id, resp.StatusCode)
 			resp.Body.Close()
 			time.Sleep(retryInterval)
 			continue
 		}
 
-		// Декодируем ответ с задачей
-		var taskResp struct {
-			Task models.Task `json:"task"`
-		}
+		// Мы получили задачу, пытаемся декодировать
+		var taskResp models.TaskResponse
 
 		if err := json.NewDecoder(resp.Body).Decode(&taskResp); err != nil {
 			log.Printf("Воркер %d: ошибка декодирования ответа: %v", id, err)
@@ -121,7 +133,7 @@ func workerLoop(id int) {
 			}
 
 			// Создаем новый буфер для каждой попытки
-			resp, err = client.Post("http://localhost:8080/internal/task", "application/json", bytes.NewBuffer(resultData))
+			resp, err = client.Post(orchestratorURL + "/internal/task", "application/json", bytes.NewBuffer(resultData))
 
 			if err != nil {
 				log.Printf("Воркер %d: ошибка отправки результата (попытка %d): %v", id, retryCount+1, err)

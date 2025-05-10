@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Распределённый вычислитель выражений</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>Распределённый вычислитель выражений</h1>
+            <nav>
+                <ul>
+                    <li><a href="/" class="active">Главная</a></li>
+                    <li><a href="/history">История</a></li>
+                    <li><a href="/help">Справка</a></li>
+                </ul>
+            </nav>
+            <div id="auth-section">
+                <div id="user-info" style="display: none;">
+                    <span id="user-greeting">Привет, <span id="user-name"></span>!</span>
+                    <button id="logout-btn">Выйти</button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        <!-- Новая секция авторизации -->
+        <section id="auth-container">
+            <div class="auth-box">
+                <div class="auth-tabs">
+                    <div class="auth-tab active" data-tab="login">Вход</div>
+                    <div class="auth-tab" data-tab="register">Регистрация</div>
+                </div>
+                
+                <div id="login-tab" class="auth-tab-content active">
+                    <h2>Вход в систему</h2>
+                    <form id="login-form">
+                        <div class="form-group">
+                            <label for="username">Логин</label>
+                            <input type="text" id="username" name="username" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="password">Пароль</label>
+                            <input type="password" id="password" name="password" required>
+                        </div>
+                        <div class="form-group">
+                            <button type="submit" id="login-btn" class="btn-primary">Войти</button>
+                        </div>
+                    </form>
+                </div>
+                
+                <div id="register-tab" class="auth-tab-content">
+                    <h2>Регистрация</h2>
+                    <form id="register-form">
+                        <div class="form-group">
+                            <label for="reg-username">Придумайте логин</label>
+                            <input type="text" id="reg-username" name="username" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="reg-password">Придумайте пароль</label>
+                            <input type="password" id="reg-password" name="password" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="reg-password-confirm">Повторите пароль</label>
+                            <input type="password" id="reg-password-confirm" name="password-confirm" required>
+                        </div>
+                        <div class="form-group">
+                            <button type="submit" id="register-btn" class="btn-primary">Зарегистрироваться</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </section>
+        
+        <section id="calculator" style="display: none;">
+            <h2>Калькулятор</h2>
+            <div class="input-group">
+                <input type="text" id="expression" placeholder="Введите выражение (пример: 2 + 2 * 2)">
+                <button id="calculate-btn">Вычислить</button>
+            </div>
+            <div id="result-container" style="display: none;">
+                <h3>Результат</h3>
+                <p id="calculation-result"></p>
+                <div id="expression-status"></div>
+            </div>
+        </section>
+
+        <section id="expressions-list" style="display: none;">
+            <h2>История вычислений</h2>
+            <div id="expressions-container">
+                <table id="expressions-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Выражение</th>
+                            <th>Статус</th>
+                            <th>Результат</th>
+                        </tr>
+                    </thead>
+                    <tbody id="expressions-body">
+                        <!-- Здесь будет список выражений -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <script src="/static/js/common.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

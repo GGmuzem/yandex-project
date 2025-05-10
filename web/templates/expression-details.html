@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Детали выражения - Распределённый вычислитель выражений</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>Распределённый вычислитель выражений</h1>
+            <nav>
+                <ul>
+                    <li><a href="/">Главная</a></li>
+                    <li><a href="/history">История</a></li>
+                    <li><a href="/help">Справка</a></li>
+                </ul>
+            </nav>
+            <div id="user-info">
+                <span id="user-greeting">Привет, <span id="user-name"></span>!</span>
+                <button id="logout-btn" class="btn btn-small">Выйти</button>
+            </div>
+        </div>
+    </header>
+
+    <main class="container">
+        <section class="expression-details">
+            <h2>Детали выражения</h2>
+            
+            <div class="expression-summary">
+                <div class="expression-id">
+                    ID: <span id="expr-id"></span>
+                </div>
+                <div class="expression-text">
+                    Выражение: <span id="expr-text"></span>
+                </div>
+                <div class="expression-status">
+                    Статус: <span id="expr-status"></span>
+                </div>
+                <div class="expression-result">
+                    Результат: <span id="expr-result"></span>
+                </div>
+                <div class="expression-date">
+                    Дата создания: <span id="expr-date"></span>
+                </div>
+            </div>
+            
+            <h3>Этапы вычисления</h3>
+            <div class="computation-steps">
+                <table id="tasks-table" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>ID задачи</th>
+                            <th>Операция</th>
+                            <th>Аргумент 1</th>
+                            <th>Аргумент 2</th>
+                            <th>Результат</th>
+                            <th>Статус</th>
+                            <th>Время выполнения</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tasks-body">
+                        <!-- Данные будут загружены через JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+            
+            <div class="computation-graph">
+                <h3>Граф вычислений</h3>
+                <div id="graph-container">
+                    <!-- Здесь будет визуализация графа вычислений -->
+                    <p>Визуализация графа вычислений будет добавлена в следующем обновлении.</p>
+                </div>
+            </div>
+            
+            <div class="actions">
+                <button id="recalculate-btn" class="btn">Пересчитать</button>
+                <button id="share-btn" class="btn">Поделиться</button>
+                <a href="/history" class="btn btn-secondary">Вернуться к истории</a>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>&copy; 2025 Распределённый вычислитель выражений</p>
+        </div>
+    </footer>
+
+    <script src="/static/js/common.js"></script>
+    <script src="/static/js/expression-details.js"></script>
+</body>
+</html>
